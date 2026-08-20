@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 
 const liveRelay = process.env.LIVE_RELAY;
 const relay = liveRelay || 'http://127.0.0.1:8787';
-const processes = [spawn('npx', ['serve', '.', '-l', '4173'], { stdio:'ignore' })];
+const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4173';
+const processes = [];
+if (!process.env.BASE_URL) processes.push(spawn('npx', ['serve', '.', '-l', '4173'], { stdio:'ignore' }));
 if (!liveRelay) processes.push(spawn('npx', ['wrangler', 'dev', '--port', '8787'], { stdio:'ignore' }));
 const stop = () => processes.forEach(process => process.kill('SIGTERM'));
 process.on('exit', stop);
@@ -16,7 +18,7 @@ async function ready(url) {
   throw new Error(`${url} did not become ready`);
 }
 
-await Promise.all([ready(`${relay}/health`), ready('http://127.0.0.1:4173')]);
+await Promise.all([ready(`${relay}/health`), ready(baseUrl)]);
 const browser = await chromium.launch({ headless:true });
 try {
   const context = await browser.newContext();
@@ -25,7 +27,7 @@ try {
   for (const page of [host,guest]) {
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if(message.type()==='error') errors.push(message.text()) });
-    await page.goto(`http://127.0.0.1:4173/?relay=${encodeURIComponent(relay)}`);
+    await page.goto(`${baseUrl}/?relay=${encodeURIComponent(relay)}`);
   }
   await host.fill('#player-name','Host'); await host.click('#open-online');
   await host.fill('#room-name','Smoke Meadow'); await host.selectOption('#room-bots','2'); await host.click('#create-form button[type=submit]');
