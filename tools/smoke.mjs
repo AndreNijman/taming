@@ -24,6 +24,9 @@ try {
   if (!await page.locator('body.playing').count()) throw new Error('game did not start');
   if (await page.locator('#landing').isVisible()) throw new Error('landing still covers the game');
   if (!await page.locator('#hud').isVisible()) throw new Error('HUD is not visible');
+  const renderedEntities = Number(await page.locator('#game').getAttribute('data-entities'));
+  if (!Number.isFinite(renderedEntities) || renderedEntities < 20) throw new Error('world entities were not rendered');
+  if (await page.locator('#game').getAttribute('data-render-error')) throw new Error('canvas reported a missing player');
   if (await page.locator('#hotbar .slot').count() !== 6) throw new Error('hotbar missing');
   await page.keyboard.down('KeyW'); await page.waitForTimeout(300); await page.keyboard.up('KeyW');
   await page.screenshot({ path:'/tmp/opencode/wildbound-smoke.png' });

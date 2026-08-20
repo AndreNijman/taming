@@ -48,6 +48,11 @@ try {
   await host.locator('body.playing').waitFor(); await guest.locator('body.playing').waitFor();
   await host.waitForTimeout(700);
   if (!await host.locator('#hud').isVisible() || !await guest.locator('#hud').isVisible()) throw new Error('multiplayer HUD missing');
+  for (const page of [host,guest]) {
+    const renderedEntities = Number(await page.locator('#game').getAttribute('data-entities'));
+    if (!Number.isFinite(renderedEntities) || renderedEntities < 20) throw new Error('multiplayer world entities were not rendered');
+    if (await page.locator('#game').getAttribute('data-render-error')) throw new Error('multiplayer canvas reported a missing player');
+  }
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('Multiplayer smoke test passed');
 } finally { await browser.close(); stop(); }

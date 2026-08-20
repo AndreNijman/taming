@@ -1,4 +1,4 @@
-import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices } from './data.js';
+import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices } from './data.js?v=20260820-2';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -16,6 +16,7 @@ const game = {
   keys:new Set(), pointer:{ x:0, y:0, down:false }, camera:{ x:0, y:0 },
   last:performance.now(), sendAt:0, localTick:0, feed:[], selected:0, selectedPet:0,
   autoAttack:false, aimLocked:false, overlay:null, dexSeason:'forest', toastTimer:null,
+  missingPlayerSince:0,
 };
 
 function resize() {
@@ -150,9 +151,14 @@ function startLocal(name) {
   beginWorld(world);
 }
 function beginWorld(world) {
-  game.world=world; game.running=true; game.paused=false; game.dead=false; game.last=performance.now();
+  game.world=world;resolveLocalPlayer();game.running=true; game.paused=false; game.dead=false; game.last=performance.now();game.missingPlayerSince=0;
   document.body.classList.add('playing'); $('hud').classList.remove('hidden'); $('pause').classList.add('hidden'); $('death').classList.add('hidden');
   renderHotbar(); updateHud(); toast('Gather. Age up. Tame the wild.');
+}
+function resolveLocalPlayer(){
+  if(game.world?.players?.[game.id])return game.world.players[game.id];if(game.mode!=='local')return null;
+  const player=Object.values(game.world?.players||{}).find(candidate=>!candidate.bot&&candidate.name===playerName())||Object.values(game.world?.players||{}).find(candidate=>!candidate.bot);
+  if(player){game.id=player.id;return player}return null;
 }
 
 function renderHotbar() {
@@ -161,7 +167,7 @@ function renderHotbar() {
 }
 function selectItem(index) { game.selected=index; game.input.selected=index; renderHotbar(); }
 function updateHud() {
-  const me=game.world?.players?.[game.id]; if(!me)return;
+  const me=game.world?.players?.[game.id]||resolveLocalPlayer(); if(!me)return;
   $('health-fill').style.width=`${Math.max(0,me.hp/me.maxHp*100)}%`; $('health-text').textContent=`${Math.ceil(me.hp)} / ${me.maxHp}`;
   $('xp-fill').style.width=`${Math.min(100,me.xp/me.nextXp*100)}%`; $('age-text').textContent=`AGE ${me.age}`;
   $('resources').innerHTML=`<div class="resource">WOOD ${me.resources.wood|0}</div><div class="resource">STONE ${me.resources.stone|0}</div><div class="resource">FOOD ${me.resources.food|0}</div><div class="resource">GOLD ${me.resources.gold|0}</div>`;
@@ -295,7 +301,7 @@ function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if
 
 function drawBackdrop(now){ctx.setTransform(devicePixelRatio>2?2:devicePixelRatio||1,0,0,devicePixelRatio>2?2:devicePixelRatio||1,0,0);ctx.fillStyle='#afc77e';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.globalAlpha=.22;for(let i=0;i<20;i++){const x=(i*271+now*.004*(i%3))%innerWidth,y=(i*173)%innerHeight;drawLeaf(x,y,18+(i%4)*5,i*.7);}ctx.globalAlpha=1;}
 function drawWorld(){
-  const world=game.world,me=world.players[game.id];if(!me)return;game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
+  const world=game.world,me=world.players[game.id]||resolveLocalPlayer();if(!me){canvas.dataset.renderError='missing-player';if(!game.missingPlayerSince)game.missingPlayerSince=performance.now();if(game.mode==='online'&&performance.now()-game.missingPlayerSince>1200)leaveGame('Your player left the range. Rejoin the lobby.');return}game.missingPlayerSince=0;delete canvas.dataset.renderError;canvas.dataset.entities=String(Object.keys(world.players).length+world.animals.length+world.resources.filter(node=>node.hp>0).length);game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
   const zoom=1,dpr=Math.min(devicePixelRatio||1,2),season=SEASONS[world.season||0];ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=season.palette.ground[0];ctx.fillRect(0,0,innerWidth,innerHeight);
   ctx.save();ctx.translate(innerWidth/2-game.camera.x*zoom,innerHeight/2-game.camera.y*zoom);ctx.scale(zoom,zoom);drawGround(world,season);
   for(const node of world.resources)if(node.hp>0&&onScreen(node))drawResource(node,season);for(const structure of world.structures)if(onScreen(structure))drawStructure(structure);for(const animal of world.animals)if(animal.hp>0&&onScreen(animal))drawAnimal(animal);for(const player of Object.values(world.players))if(!player.dead&&onScreen(player))drawPlayer(player);ctx.restore();
