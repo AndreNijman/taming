@@ -1,0 +1,19 @@
+{
+  "name": "wildbound-io",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "serve": "npx serve . -l 4173",
+    "check": "node --check game.js && node --check worker.js",
+    "test": "node tools/smoke.mjs",
+    "test:mp": "node tools/mp-smoke.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "serve": "^14.2.4",
+    "wrangler": "^4.33.1"
+  }
+}

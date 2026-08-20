@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#c9d98b">
+  <title>Wildbound.io</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anybody:wdth,wght@75..125,500..800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="shell">
+    <canvas id="game" aria-label="Wildbound survival game"></canvas>
+
+    <section id="landing" class="screen">
+      <div class="brand" aria-label="Wildbound dot io">
+        <span class="brand-mark">W</span>
+        <div><h1>WILDBOUND</h1><p>SURVIVE. BUILD. BEFRIEND THE WILD.</p></div>
+      </div>
+      <div class="entry-panel">
+        <label for="player-name">TAMER NAME</label>
+        <input id="player-name" maxlength="16" autocomplete="nickname" placeholder="wanderer">
+        <button id="play-cpu" class="primary">PLAY WITH CPU</button>
+        <button id="open-online" class="secondary">MULTIPLAYER</button>
+        <button id="how-button" class="text-button" aria-expanded="false">HOW TO PLAY</button>
+      </div>
+      <aside class="field-note">
+        <span>FIELD NOTE 01</span>
+        <p>Sleeping young animals can be tamed. Keep your distance from adults until your companion grows.</p>
+      </aside>
+      <div id="how" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="how-title">
+        <h2 id="how-title">Field manual</h2>
+        <div class="manual-grid">
+          <p><kbd>WASD</kbd><span>Move</span></p><p><kbd>MOUSE</kbd><span>Aim</span></p>
+          <p><kbd>CLICK</kbd><span>Attack / gather</span></p><p><kbd>E</kbd><span>Tame nearby baby</span></p>
+          <p><kbd>1-6</kbd><span>Select item</span></p><p><kbd>Q</kbd><span>Pet command</span></p>
+          <p><kbd>R</kbd><span>Eat food</span></p><p><kbd>ENTER</kbd><span>Chat</span></p>
+        </div>
+        <p class="copy">Harvest wood, stone and food. Age up to unlock stronger gear. Place defenses, tame up to three companions and outlast rival tamers.</p>
+        <button id="close-how" class="primary">UNDERSTOOD</button>
+      </div>
+    </section>
+
+    <section id="online" class="screen hidden">
+      <header class="screen-head"><button class="back" data-back="landing" aria-label="Back">←</button><div><span>ONLINE RANGE</span><h2>Named lobbies</h2></div></header>
+      <div class="online-grid">
+        <form id="create-form" class="paper-panel">
+          <div class="panel-number">CREATE</div>
+          <label for="room-name">LOBBY NAME</label>
+          <input id="room-name" required maxlength="24" placeholder="Mossy meadow">
+          <label for="room-password">PASSWORD <small>OPTIONAL</small></label>
+          <input id="room-password" maxlength="40" type="password" autocomplete="new-password" placeholder="Leave open">
+          <div class="split">
+            <label>MAX PLAYERS<select id="room-max"><option>4</option><option selected>8</option><option>12</option><option>16</option></select></label>
+            <label>CPU RIVALS<select id="room-bots"><option>0</option><option>2</option><option selected>4</option><option>6</option><option>8</option></select></label>
+          </div>
+          <button class="primary" type="submit">CREATE LOBBY</button>
+        </form>
+        <div class="paper-panel browser-panel">
+          <div class="browser-title"><div><div class="panel-number">JOIN</div><h3>Open ranges</h3></div><button id="refresh" class="icon-button" aria-label="Refresh lobbies">↻</button></div>
+          <div id="lobbies" class="lobby-list" aria-live="polite"><p class="empty">Scanning the ranges...</p></div>
+          <form id="join-form" class="join-direct">
+            <input id="join-name" maxlength="24" required placeholder="Exact lobby name" aria-label="Lobby name">
+            <input id="join-password" maxlength="40" type="password" placeholder="Password if locked" aria-label="Lobby password">
+            <button class="secondary" type="submit">JOIN BY NAME</button>
+          </form>
+        </div>
+      </div>
+      <p id="online-error" class="error" role="status"></p>
+    </section>
+
+    <section id="lobby" class="screen hidden">
+      <header class="screen-head"><button id="leave-lobby" class="back" aria-label="Leave lobby">←</button><div><span>ASSEMBLY POINT</span><h2 id="lobby-name">Lobby</h2></div></header>
+      <div class="lobby-sheet">
+        <div><div class="panel-number">TAMERS</div><div id="roster" class="roster"></div></div>
+        <div class="lobby-rules"><div class="panel-number">RANGE CONDITIONS</div><p>One continuous world</p><p>Friendly fire enabled</p><p>Pets persist until defeat</p><p id="lobby-cpu"></p></div>
+      </div>
+      <button id="start-match" class="primary start-button">START EXPEDITION</button>
+      <p id="lobby-wait" class="muted">Only the lobby creator can start.</p>
+    </section>
+
+    <section id="hud" class="hidden" aria-label="Game information">
+      <div class="status-stack">
+        <div class="meter health"><span id="health-fill"></span><b id="health-text">100</b></div>
+        <div class="meter xp"><span id="xp-fill"></span><b id="age-text">AGE 0</b></div>
+      </div>
+      <div id="resources" class="resources"></div>
+      <div id="pet-panel" class="pet-panel"><span>NO COMPANION</span><small>Find a sleeping baby</small></div>
+      <div id="minimap" class="minimap-label">FOREST · DAY 1</div>
+      <div id="hotbar" class="hotbar"></div>
+      <div id="feed" class="feed"></div>
+      <div id="prompt" class="prompt hidden"></div>
+      <button id="menu-button" class="menu-button" aria-label="Pause">☰</button>
+      <div id="chat" class="chat"><div id="chat-lines"></div><input id="chat-input" class="hidden" maxlength="100" placeholder="Message everyone..."></div>
+      <div id="mobile-controls"><div id="stick"><i></i></div><button id="mobile-action">HIT</button><button id="mobile-tame">TAME</button></div>
+    </section>
+
+    <section id="pause" class="dialog pause hidden" role="dialog" aria-modal="true">
+      <span class="panel-number">EXPEDITION PAUSED</span><h2>Take a breath.</h2>
+      <button id="resume" class="primary">RETURN</button><button id="quit" class="secondary">LEAVE RANGE</button>
+    </section>
+    <section id="death" class="dialog death hidden" role="dialog" aria-modal="true">
+      <span class="panel-number">THE WILD WON THIS ROUND</span><h2 id="death-title">You were defeated.</h2>
+      <p id="death-stats"></p><button id="respawn" class="primary">RESPAWN</button><button id="death-quit" class="secondary">LEAVE RANGE</button>
+    </section>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </main>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
