@@ -11,6 +11,10 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('http://localhost:4173', { waitUntil:'networkidle' });
   await page.fill('#player-name', 'Smoke');
+  await page.click('#open-tamodex');
+  await page.locator('.dex-card').nth(9).waitFor();
+  if (await page.locator('.dex-card').count() !== 10) throw new Error('season pet catalog incomplete');
+  await page.click('.collection-back');
   await page.click('#play-cpu');
   await page.waitForTimeout(1000);
   if (!await page.locator('body.playing').count()) throw new Error('game did not start');

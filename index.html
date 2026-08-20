@@ -24,6 +24,7 @@
         <input id="player-name" maxlength="16" autocomplete="nickname" placeholder="wanderer">
         <button id="play-cpu" class="primary">PLAY WITH CPU</button>
         <button id="open-online" class="secondary">MULTIPLAYER</button>
+        <div class="menu-pair"><button id="open-tamodex" class="text-button">TAMODEX</button><button id="open-shop-home" class="text-button">COSMETICS</button></div>
         <button id="how-button" class="text-button" aria-expanded="false">HOW TO PLAY</button>
       </div>
       <aside class="field-note">
@@ -34,13 +35,21 @@
         <h2 id="how-title">Field manual</h2>
         <div class="manual-grid">
           <p><kbd>WASD</kbd><span>Move</span></p><p><kbd>MOUSE</kbd><span>Aim</span></p>
-          <p><kbd>CLICK</kbd><span>Attack / gather</span></p><p><kbd>E</kbd><span>Tame nearby baby</span></p>
-          <p><kbd>1-6</kbd><span>Select item</span></p><p><kbd>Q</kbd><span>Pet command</span></p>
-          <p><kbd>R</kbd><span>Eat food</span></p><p><kbd>ENTER</kbd><span>Chat</span></p>
+          <p><kbd>CLICK</kbd><span>Attack / gather</span></p><p><kbd>E</kbd><span>Toggle auto-attack</span></p>
+          <p><kbd>.</kbd><span>Tame nearby baby</span></p><p><kbd>1–3</kbd><span>Select companion</span></p>
+          <p><kbd>4–6</kbd><span>Companion skills</span></p><p><kbd>L</kbd><span>Lock facing direction</span></p>
+          <p><kbd>M</kbd><span>World map</span></p><p><kbd>C</kbd><span>Open field shop</span></p>
+          <p><kbd>B</kbd><span>Eat food</span></p><p><kbd>ENTER</kbd><span>Chat</span></p>
         </div>
         <p class="copy">Harvest wood, stone and food. Age up to unlock stronger gear. Place defenses, tame up to three companions and outlast rival tamers.</p>
         <button id="close-how" class="primary">UNDERSTOOD</button>
       </div>
+    </section>
+
+    <section id="tamodex" class="screen hidden collection-screen">
+      <header class="screen-head"><button class="back collection-back" aria-label="Back">←</button><div><span>FIELD ARCHIVE</span><h2>Tamodex</h2></div></header>
+      <div class="dex-toolbar"><div id="dex-seasons" class="dex-tabs"></div><p id="dex-count"></p></div>
+      <div id="dex-grid" class="dex-grid"></div>
     </section>
 
     <section id="online" class="screen hidden">
@@ -88,6 +97,8 @@
       </div>
       <div id="resources" class="resources"></div>
       <div id="pet-panel" class="pet-panel"><span>NO COMPANION</span><small>Find a sleeping baby</small></div>
+      <div id="pet-controls" class="pet-controls"></div>
+      <div id="combat-flags" class="combat-flags"><span id="auto-flag">E AUTO: OFF</span><span id="lock-flag">L AIM: FREE</span></div>
       <div id="minimap" class="minimap-label">FOREST · DAY 1</div>
       <div id="hotbar" class="hotbar"></div>
       <div id="feed" class="feed"></div>
@@ -95,6 +106,19 @@
       <button id="menu-button" class="menu-button" aria-label="Pause">☰</button>
       <div id="chat" class="chat"><div id="chat-lines"></div><input id="chat-input" class="hidden" maxlength="100" placeholder="Message everyone..."></div>
       <div id="mobile-controls"><div id="stick"><i></i></div><button id="mobile-action">HIT</button><button id="mobile-tame">TAME</button></div>
+    </section>
+
+    <section id="age-choice" class="dialog age-choice hidden" role="dialog" aria-modal="true" aria-labelledby="age-choice-title">
+      <span class="panel-number">AGE UP</span><h2 id="age-choice-title">Choose new knowledge</h2><p>Pick one. Your choice lasts until this expedition ends.</p>
+      <div id="age-options" class="age-options"></div>
+    </section>
+    <section id="world-map" class="dialog map-dialog hidden" role="dialog" aria-modal="true">
+      <div class="dialog-head"><div><span class="panel-number">WORLD MAP</span><h2>The range</h2></div><button id="close-map" class="icon-button" aria-label="Close map">×</button></div>
+      <canvas id="map-canvas" width="640" height="480"></canvas>
+    </section>
+    <section id="field-shop" class="dialog shop-dialog hidden" role="dialog" aria-modal="true">
+      <div class="dialog-head"><div><span class="panel-number">FIELD SHOP</span><h2>Useful things</h2></div><button id="close-shop" class="icon-button" aria-label="Close shop">×</button></div>
+      <div id="shop-items" class="shop-items"></div>
     </section>
 
     <section id="pause" class="dialog pause hidden" role="dialog" aria-modal="true">
