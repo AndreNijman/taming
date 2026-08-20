@@ -53,6 +53,11 @@ try {
     if (!Number.isFinite(renderedEntities) || renderedEntities < 20) throw new Error('multiplayer world entities were not rendered');
     if (await page.locator('#game').getAttribute('data-render-error')) throw new Error('multiplayer canvas reported a missing player');
   }
+  await host.locator('#hotbar .slot').nth(2).click();
+  await host.mouse.move(800,360);await host.mouse.down();await host.waitForTimeout(120);await host.mouse.up();
+  await host.waitForFunction(() => Number(document.querySelector('#game')?.dataset.structures) === 1);
+  await guest.waitForFunction(() => Number(document.querySelector('#game')?.dataset.structures) === 1);
+  if (await host.locator('#game').getAttribute('data-action') !== 'build') throw new Error('multiplayer building animation was not synchronized');
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('Multiplayer smoke test passed');
 } finally { await browser.close(); stop(); }

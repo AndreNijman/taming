@@ -28,6 +28,13 @@ try {
   if (!Number.isFinite(renderedEntities) || renderedEntities < 20) throw new Error('world entities were not rendered');
   if (await page.locator('#game').getAttribute('data-render-error')) throw new Error('canvas reported a missing player');
   if (await page.locator('#hotbar .slot').count() !== 6) throw new Error('hotbar missing');
+  await page.locator('#hotbar .slot').nth(2).click();
+  if (!await page.locator('#hotbar .slot').nth(2).evaluate(element => element.classList.contains('selected'))) throw new Error('building slot was not selectable');
+  const beforeStructures = Number(await page.locator('#game').getAttribute('data-structures'));
+  await page.mouse.move(780, 360);await page.mouse.down();await page.waitForTimeout(100);await page.mouse.up();await page.waitForTimeout(100);
+  const afterStructures = Number(await page.locator('#game').getAttribute('data-structures'));
+  if (afterStructures !== beforeStructures + 1) throw new Error('clicking the selected building did not place it');
+  if (await page.locator('#game').getAttribute('data-action') !== 'build') throw new Error('building action animation was not triggered');
   await page.keyboard.down('KeyW'); await page.waitForTimeout(300); await page.keyboard.up('KeyW');
   await page.screenshot({ path:'/tmp/opencode/wildbound-smoke.png' });
   if(errors.length)throw new Error(errors.join('\n'));
