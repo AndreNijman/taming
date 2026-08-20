@@ -1,4 +1,4 @@
-import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices } from './data.js?v=20260820-2';
+import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js?v=20260820-6';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -12,11 +12,11 @@ const itemCost = item => Object.entries(item?.cost || {}).filter(([,value])=>val
 
 const game = {
   mode:null, ws:null, room:'', id:null, host:false, running:false, paused:false, dead:false,
-  world:null, input:{ x:0, y:0, angle:0, attack:false, interact:false, selected:0 },
+  world:null, input:{ x:0, y:0, angle:0, rotation:0, attack:false, interact:false, selected:0 },
   keys:new Set(), pointer:{ x:0, y:0, down:false }, camera:{ x:0, y:0 },
   last:performance.now(), sendAt:0, localTick:0, feed:[], selected:0, selectedPet:0,
   autoAttack:false, aimLocked:false, overlay:null, dexSeason:'forest', toastTimer:null,
-  missingPlayerSince:0,
+  missingPlayerSince:0, buildRotationOffset:0, snapshotAt:performance.now(), renderSeason:null,
 };
 
 function resize() {
@@ -109,7 +109,7 @@ function handleMessage(message) {
   if (message.t === 'welcome') { game.id = message.id; game.host = message.host; $('online-error').textContent = ''; return; }
   if (message.t === 'lobby') { renderLobby(message); return; }
   if (message.t === 'start') { game.id = message.you || game.id; beginWorld(message.world); return; }
-  if (message.t === 'snapshot') { game.world = message.world; if (game.world.players[game.id]?.dead) showDeath(); updateHud(); return; }
+  if (message.t === 'snapshot') { game.world = message.world;game.snapshotAt=performance.now();if (game.world.players[game.id]?.dead) showDeath(); updateHud(); return; }
   if (message.t === 'event') { addFeed(message.message); if (message.self) toast(message.message); return; }
   if (message.t === 'chat') addChat(message.name, message.message);
 }
@@ -151,7 +151,7 @@ function startLocal(name) {
   beginWorld(world);
 }
 function beginWorld(world) {
-  game.world=world;resolveLocalPlayer();game.running=true; game.paused=false; game.dead=false; game.last=performance.now();game.missingPlayerSince=0;
+  game.world=world;resolveLocalPlayer();game.running=true; game.paused=false; game.dead=false; game.last=performance.now();game.snapshotAt=game.last;game.missingPlayerSince=0;
   document.body.classList.add('playing'); $('hud').classList.remove('hidden'); $('pause').classList.add('hidden'); $('death').classList.add('hidden');
   renderHotbar(); updateHud(); toast('Gather. Age up. Tame the wild.');
 }
@@ -166,6 +166,8 @@ function renderHotbar() {
   (me?.loadout||STARTING_ITEMS).forEach((id,index)=>{ const item=ITEM_BY_ID.get(id); if(!item)return; const slot=document.createElement('div'); slot.className=`slot ${index===game.selected?'selected':''}`; slot.innerHTML=`<small>${item.slot.toUpperCase()}</small><strong>${item.name}</strong><em>${item.category==='building'?itemCost(item):''}</em>`; slot.onclick=()=>selectItem(index); bar.append(slot); });
 }
 function selectItem(index) { game.selected=index; game.input.selected=index; renderHotbar();const me=game.world?.players?.[game.id],item=ITEM_BY_ID.get(me?.loadout?.[index]);if(item)toast(`${item.name} selected${item.category==='building'?' · click the ground to place':''}`); }
+function currentWorldTime(){return (game.world?.time||0)+(game.mode==='online'?(performance.now()-game.snapshotAt)/1000:0)}
+function formatTime(seconds){const value=Math.max(0,Math.ceil(seconds));return `${Math.floor(value/60)}:${String(value%60).padStart(2,'0')}`}
 function updateHud() {
   const me=game.world?.players?.[game.id]||resolveLocalPlayer(); if(!me)return;
   $('health-fill').style.width=`${Math.max(0,me.hp/me.maxHp*100)}%`; $('health-text').textContent=`${Math.ceil(me.hp)} / ${me.maxHp}`;
@@ -174,7 +176,7 @@ function updateHud() {
   const pets=(game.world.animals||[]).filter(animal=>animal.owner===game.id);
   $('pet-panel').innerHTML=pets.length?`<span>${pets.map(p=>`${(PET_BY_ID.get(p.species)?.name||p.species).toUpperCase()} ${['BABY','ADULT','BOSS'][p.level]}`).join(' · ')}</span><small>${pets.map(p=>Math.ceil(p.hp)).join(' / ')} health · 1–3 select · 4–6 skill</small>`:'<span>NO COMPANION</span><small>Find a sleeping baby and press .</small>';
   $('pet-controls').innerHTML=pets.map((pet,index)=>`<div class="pet-chip ${index===game.selectedPet?'active':''}"><b>${index+1} ${(PET_BY_ID.get(pet.species)?.name||pet.species).split(' ')[0]}</b><small>${index+4} ${PET_BY_ID.get(pet.species)?.skill||'skill'}</small></div>`).join('');
-  $('minimap').textContent=`${(game.world.biome||'Forest').toUpperCase()} · DAY ${game.world.day||1}`;
+  const seasonTiming=getSeasonTiming(currentWorldTime()),season=SEASONS[seasonTiming.index],previous=SEASONS[seasonTiming.previous],seasonName=seasonTiming.blend<1?`${previous.name} → ${season.name}`:season.name;$('minimap').textContent=`${seasonName.toUpperCase()} · ${formatTime(seasonTiming.remaining)}`;
   [...$('hotbar').children].forEach((slot,i)=>slot.style.opacity=me.unlocks?.includes(me.loadout[i])?'1':'.42');
   $('auto-flag').textContent=`E AUTO: ${game.autoAttack?'ON':'OFF'}`;$('lock-flag').textContent=`L AIM: ${game.aimLocked?'LOCKED':'FREE'}`;
   if(me.choiceAge!==null&&me.choiceAge!==undefined&&$('age-choice').classList.contains('hidden'))openAgeChoice(me.choiceAge);
@@ -210,13 +212,21 @@ function drawFullMap(){const map=$('map-canvas'),m=map.getContext('2d'),world=ga
 function distance(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
 function clamp(value,min,max){ return Math.max(min,Math.min(max,value)); }
 function norm(x,y){ const length=Math.hypot(x,y)||1; return {x:x/length,y:y/length}; }
+function mixColor(from,to,amount){const a=from.match(/\w\w/g).map(value=>parseInt(value,16)),b=to.match(/\w\w/g).map(value=>parseInt(value,16));return `#${a.map((value,index)=>Math.round(value+(b[index]-value)*amount).toString(16).padStart(2,'0')).join('')}`}
+function blendedSeason(time){const timing=getSeasonTiming(time),current=SEASONS[timing.index],previous=SEASONS[timing.previous];if(timing.blend>=1)return {season:current,timing};const palette=Object.fromEntries(Object.keys(current.palette).map(key=>[key,current.palette[key].map((color,index)=>mixColor(previous.palette[key][index],color,timing.blend))]));return {season:{...current,palette},timing}}
+function structureKind(item){return ['wall','door','spike','windmill'].includes(item.slot)?item.slot:item.stats.healing?'healer':item.stats.boost?'boost':'turret'}
+function placementRotation(player){return player.angle+Math.PI/2+game.buildRotationOffset}
+function structureBlocksPlayer(structure,player,x,y){
+  if(structure.type!=='wall'&&structure.type!=='door')return false;if(structure.type==='door'&&structure.owner===player.id)return false;
+  const angle=-(structure.rotation||0),dx=x-structure.x,dy=y-structure.y,localX=dx*Math.cos(angle)-dy*Math.sin(angle),localY=dx*Math.sin(angle)+dy*Math.cos(angle),nearestX=clamp(localX,-33,33),nearestY=clamp(localY,-13,13);return (localX-nearestX)**2+(localY-nearestY)**2<19**2;
+}
 function getCosts(type){ return type==='wall'?{wood:20}:type==='spike'?{wood:15,stone:10}:type==='turret'?{wood:35,stone:25,gold:10}:{}; }
 function canPay(player,cost){ return Object.entries(cost).every(([key,value])=>player.resources[key]>=value); }
 function pay(player,cost){ Object.entries(cost).forEach(([key,value])=>player.resources[key]-=value); }
 function gainXp(player,amount){ player.xp+=amount; while(player.xp>=player.nextXp){ player.xp-=player.nextXp; player.age++; player.nextXp=40*(player.age+1); player.maxHp+=5; player.hp=player.maxHp; player.choiceAge=Math.min(27,player.age); if(player.bot){const choices=getAgeChoiceIds(player,player.choiceAge);applyChoice(player,choices[Math.floor(Math.random()*choices.length)]);}else if(player.id===game.id)toast(`Age ${player.age}: choose new knowledge`); } }
 
 function simulateLocal(dt) {
-  const world=game.world; world.time+=dt; world.day=1+Math.floor(world.time/180);const nextSeason=Math.floor(world.time/75)%SEASONS.length;if(nextSeason!==world.season){world.season=nextSeason;world.biome=SEASONS[nextSeason].name;const oldBoss=world.animals.find(a=>a.boss);if(oldBoss)Object.assign(oldBoss,makeBoss(SEASONS[nextSeason]));addFeed(`${world.biome} has reached the range`)}
+  const world=game.world;world.time+=dt;world.day=1+Math.floor(world.time/180);const timing=getSeasonTiming(world.time),nextSeason=timing.index;if(nextSeason!==world.season){world.season=nextSeason;world.biome=SEASONS[nextSeason].name;const oldBoss=world.animals.find(a=>a.boss);if(oldBoss)Object.assign(oldBoss,makeBoss(SEASONS[nextSeason]));addFeed(`${world.biome} has reached the range`)}
   const me=world.players[game.id]; applyPlayerInput(me,game.input,dt); game.input.interact=false;
   for(const player of Object.values(world.players)){ player.cooldown=Math.max(0,player.cooldown-dt); if(player.dead){ player.respawn-=dt; if(player.bot&&player.respawn<=0)respawnPlayer(player); continue; } if(player.bot)updateBot(player,dt); }
   updateAnimals(world,dt); updateStructures(world,dt); updateResources(world,dt);
@@ -224,7 +234,7 @@ function simulateLocal(dt) {
 }
 function applyPlayerInput(player,input,dt){
   if(!player||player.dead)return; const direction=norm(input.x,input.y); const moving=Math.abs(input.x)+Math.abs(input.y)>.05; const speed=175;
-  if(moving){ const nextX=clamp(player.x+direction.x*speed*dt,24,WORLD_W-24),nextY=clamp(player.y+direction.y*speed*dt,24,WORLD_H-24),blocked=game.world.structures.some(s=>['wall','door'].includes(s.type)&&s.owner!==player.id&&Math.hypot(s.x-nextX,s.y-nextY)<38);if(!blocked){player.x=nextX;player.y=nextY;} }
+  if(moving){const nextX=clamp(player.x+direction.x*speed*dt,24,WORLD_W-24);if(!game.world.structures.some(structure=>structureBlocksPlayer(structure,player,nextX,player.y)))player.x=nextX;const nextY=clamp(player.y+direction.y*speed*dt,24,WORLD_H-24);if(!game.world.structures.some(structure=>structureBlocksPlayer(structure,player,player.x,nextY)))player.y=nextY}
   player.angle=input.angle; player.selected=input.selected;
   if(input.attack&&player.cooldown<=0)performAction(player);
   if(input.interact)tameNearest(player);
@@ -245,7 +255,7 @@ function performAction(player){
 function angleDiff(a,b){ return Math.atan2(Math.sin(b-a),Math.cos(b-a)); }
 function harvest(player,node,amount){ if(node.hp<=0)return; node.hp-=amount; const yields=node.type==='tree'?['wood',4]:node.type==='rock'?['stone',3]:node.type==='berry'?['food',2]:['gold',2]; player.resources[yields[0]]+=yields[1]; gainXp(player,4); if(node.hp<=0){ node.respawn=25+Math.random()*20; gainXp(player,18); } }
 function defeat(killer,target){ target.hp=0; if(target.id?.startsWith('r'))return; gainXp(killer,target.boss?400:target.baby?50:100); killer.resources.food+=target.boss?40:2;if(target.boss){killer.resources.gold+=180;target.respawn=45;const roster=PETS.filter(p=>p.season===SEASONS[game.world.season||0].id&&['epic','legendary','rare'].includes(p.rarity));for(let i=0;i<3;i++){const pet=roster[i%roster.length];game.world.animals.push({id:`reward${Date.now()}${i}`,species:pet.id,x:target.x+(i-1)*55,y:target.y+65,hp:Math.round(pet.baseStats.hp*.58),max:Math.round(pet.baseStats.hp*.58),baby:true,sleep:true,owner:null,level:0,xp:0,angle:0,cooldown:0,respawn:0})}addFeed(`${killer.name} defeated ${SEASONS[game.world.season||0].bossId.replaceAll('-',' ')}`);return} if(target.id in game.world.players){ target.dead=true; target.respawn=5; killer.kills++; addFeed(`${killer.name} defeated ${target.name}`); } else { target.respawn=20; } }
-function placeStructure(player,item){ const cost=item.cost||{}; if(!canPay(player,cost)){ if(player.id===game.id)toast('Not enough resources'); player.cooldown=.3; return; } const x=player.x+Math.cos(player.angle)*72,y=player.y+Math.sin(player.angle)*72; if(game.world.structures.some(s=>Math.hypot(s.x-x,s.y-y)<52)){ if(player.id===game.id)toast('Too close to another structure');return; } pay(player,cost); const kind=['wall','door','spike','windmill'].includes(item.slot)?item.slot:item.stats.healing?'healer':item.stats.boost?'boost':'turret',hp=item.stats.health||160; game.world.structures.push({id:`s${Date.now()}${Math.random()}`,type:kind,item:item.id,x,y,owner:player.id,hp,max:hp,cooldown:0,damage:item.stats.damage||0,range:item.stats.range||0,income:item.stats.income||0,healing:item.stats.healing||0}); player.cooldown=.4; }
+function placeStructure(player,item){ const cost=item.cost||{}; if(!canPay(player,cost)){ if(player.id===game.id)toast('Not enough resources'); player.cooldown=.3; return; } const x=player.x+Math.cos(player.angle)*72,y=player.y+Math.sin(player.angle)*72; if(game.world.structures.some(s=>Math.hypot(s.x-x,s.y-y)<52)){ if(player.id===game.id)toast('Too close to another structure');return; } pay(player,cost); const kind=structureKind(item),hp=item.stats.health||160; game.world.structures.push({id:`s${Date.now()}${Math.random()}`,type:kind,item:item.id,x,y,rotation:placementRotation(player),owner:player.id,hp,max:hp,cooldown:0,damage:item.stats.damage||0,range:item.stats.range||0,income:item.stats.income||0,healing:item.stats.healing||0}); player.cooldown=.4; }
 function tameNearest(player){ const owned=game.world.animals.filter(a=>a.owner===player.id); if(owned.length>=3){ if(player.id===game.id)toast('You can guide only three companions'); return; } const pet=game.world.animals.filter(a=>a.baby&&a.sleep&&!a.owner&&a.hp>0&&distance(a,player)<80).sort((a,b)=>distance(a,player)-distance(b,player))[0]; if(!pet){ if(player.id===game.id)toast('No sleeping baby close enough'); return; } if(Math.random()<.76){ const def=PET_BY_ID.get(pet.species);pet.owner=player.id; pet.sleep=false; pet.hp=pet.max=Math.round((def?.baseStats.hp||100)*.7); player.pets.push(pet.id); addFeed(`${player.name} befriended a ${def?.name||pet.species}`); } else { pet.sleep=false; if(player.id===game.id)toast('It woke up startled'); } }
 function updateBot(bot,dt){
   bot.brain=(bot.brain||0)-dt; if(bot.brain<=0){ bot.brain=.35+Math.random()*.5; const threats=Object.values(game.world.players).filter(p=>p.id!==bot.id&&!p.dead&&distance(p,bot)<240); const node=game.world.resources.filter(r=>r.hp>0).sort((a,b)=>distance(a,bot)-distance(b,bot))[0]; const baby=game.world.animals.find(a=>a.baby&&a.sleep&&!a.owner&&distance(a,bot)<100); if(baby&&Math.random()<.35)tameNearest(bot); bot.goal=threats[0]||node; if(bot.age>=2&&Math.random()<.08){ bot.selected=3+Math.floor(Math.random()*Math.min(3,Math.max(1,bot.age-1))); performAction(bot); } }
@@ -268,13 +278,14 @@ function updateInput() {
   game.input.x=(game.keys.has('d')||game.keys.has('arrowright')?1:0)-(game.keys.has('a')||game.keys.has('arrowleft')?1:0);
   game.input.y=(game.keys.has('s')||game.keys.has('arrowdown')?1:0)-(game.keys.has('w')||game.keys.has('arrowup')?1:0);
   game.input.attack=game.pointer.down||game.keys.has(' ')||game.autoAttack;
-  const me=game.world?.players?.[game.id];if(me&&!game.aimLocked){const screenX=innerWidth/2+(me.x-game.camera.x),screenY=innerHeight/2+(me.y-game.camera.y);game.input.angle=Math.atan2(game.pointer.y-screenY,game.pointer.x-screenX)}
+  const me=game.world?.players?.[game.id];if(me&&!game.aimLocked){const screenX=innerWidth/2+(me.x-game.camera.x),screenY=innerHeight/2+(me.y-game.camera.y);game.input.angle=Math.atan2(game.pointer.y-screenY,game.pointer.x-screenX)}if(me)game.input.rotation=placementRotation(me);
 }
 addEventListener('keydown',event=>{
   const key=event.key.toLowerCase(); if($('chat-input')===document.activeElement)return;
   if(['1','2','3'].includes(key)){game.selectedPet=+key-1;updateHud()}
   if(['4','5','6'].includes(key))usePetSkill(+key-4);
   if(key==='e'){game.autoAttack=!game.autoAttack;toast(`Auto-attack ${game.autoAttack?'on':'off'}`)}
+  if(key==='r'&&ITEM_BY_ID.get(game.world?.players?.[game.id]?.loadout?.[game.selected])?.category==='building'){game.buildRotationOffset+=Math.PI/4;toast('Building rotated 45°')}
   if(key==='.')game.input.interact=true;if(key==='b')eatFood();if(key==='l'){game.aimLocked=!game.aimLocked;toast(`Aim ${game.aimLocked?'locked':'free'}`)}if(key==='m')openMap();if(key==='c')openShop();if(key==='enter')openChat();if(key==='escape'&&game.running)togglePause();
   const buildKeys={u:'palisade',h:'briar-trap',g:'acorn-tower',v:'stone-gate',t:'storehouse',f:'healing-totem'};if(buildKeys[key])selectUnlockedItem(buildKeys[key]);
   game.keys.add(key);
@@ -282,6 +293,7 @@ addEventListener('keydown',event=>{
 addEventListener('keyup',event=>game.keys.delete(event.key.toLowerCase()));
 canvas.addEventListener('pointermove',event=>{game.pointer.x=event.clientX;game.pointer.y=event.clientY});
 canvas.addEventListener('pointerdown',event=>{game.pointer.down=true;game.pointer.x=event.clientX;game.pointer.y=event.clientY});
+canvas.addEventListener('wheel',event=>{if(ITEM_BY_ID.get(game.world?.players?.[game.id]?.loadout?.[game.selected])?.category!=='building')return;event.preventDefault();game.buildRotationOffset+=Math.sign(event.deltaY)*Math.PI/12},{passive:false});
 addEventListener('pointerup',()=>game.pointer.down=false);
 canvas.addEventListener('contextmenu',event=>event.preventDefault());
 function eatFood(){const me=game.world?.players?.[game.id],food=me&&ITEM_BY_ID.get(me.loadout.find(id=>ITEM_BY_ID.get(id)?.slot==='food')),cost=food?.stats.foodUse||5;if(!me||me.resources.food<cost||me.hp>=me.maxHp)return;if(game.mode==='online')send({t:'eat'});else{me.resources.food-=cost;me.hp=Math.min(me.maxHp,me.hp+(food?.stats.healing||10));}}
@@ -303,12 +315,12 @@ function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if
 
 function drawBackdrop(now){ctx.setTransform(devicePixelRatio>2?2:devicePixelRatio||1,0,0,devicePixelRatio>2?2:devicePixelRatio||1,0,0);ctx.fillStyle='#afc77e';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.globalAlpha=.22;for(let i=0;i<20;i++){const x=(i*271+now*.004*(i%3))%innerWidth,y=(i*173)%innerHeight;drawLeaf(x,y,18+(i%4)*5,i*.7);}ctx.globalAlpha=1;}
 function drawWorld(){
-  const world=game.world,me=world.players[game.id]||resolveLocalPlayer();if(!me){canvas.dataset.renderError='missing-player';if(!game.missingPlayerSince)game.missingPlayerSince=performance.now();if(game.mode==='online'&&performance.now()-game.missingPlayerSince>1200)leaveGame('Your player left the range. Rejoin the lobby.');return}game.missingPlayerSince=0;delete canvas.dataset.renderError;canvas.dataset.entities=String(Object.keys(world.players).length+world.animals.length+world.resources.filter(node=>node.hp>0).length);canvas.dataset.structures=String(world.structures.length);canvas.dataset.action=me.actionKind||'';game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
-  const zoom=1,dpr=Math.min(devicePixelRatio||1,2),season=SEASONS[world.season||0];ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=season.palette.ground[0];ctx.fillRect(0,0,innerWidth,innerHeight);
+  const world=game.world,me=world.players[game.id]||resolveLocalPlayer();if(!me){canvas.dataset.renderError='missing-player';if(!game.missingPlayerSince)game.missingPlayerSince=performance.now();if(game.mode==='online'&&performance.now()-game.missingPlayerSince>1200)leaveGame('Your player left the range. Rejoin the lobby.');return}game.missingPlayerSince=0;delete canvas.dataset.renderError;canvas.dataset.entities=String(Object.keys(world.players).length+world.animals.length+world.resources.filter(node=>node.hp>0).length);canvas.dataset.structures=String(world.structures.length);canvas.dataset.action=me.actionKind||'';canvas.dataset.playerX=String(me.x);canvas.dataset.structureX=String(world.structures[0]?.x??'');canvas.dataset.structureRotation=String(world.structures[0]?.rotation??'');game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
+  const zoom=1,dpr=Math.min(devicePixelRatio||1,2),visualTime=currentWorldTime(),seasonView=blendedSeason(visualTime),season=seasonView.season;game.renderSeason=season;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=season.palette.ground[0];ctx.fillRect(0,0,innerWidth,innerHeight);
   ctx.save();ctx.translate(innerWidth/2-game.camera.x*zoom,innerHeight/2-game.camera.y*zoom);ctx.scale(zoom,zoom);drawGround(world,season);
   for(const node of world.resources)if(node.hp>0&&onScreen(node))drawResource(node,season);for(const structure of world.structures)if(onScreen(structure))drawStructure(structure);drawPlacementPreview(me);for(const animal of world.animals)if(animal.hp>0&&onScreen(animal))drawAnimal(animal);for(const player of Object.values(world.players))if(!player.dead&&onScreen(player))drawPlayer(player);ctx.restore();
-  drawSeasonOverlay(season,world.time);drawMinimap(world,me);drawCrosshair();const closeBaby=world.animals.find(a=>a.baby&&a.sleep&&!a.owner&&a.hp>0&&distance(a,me)<80);$('prompt').classList.toggle('hidden',!closeBaby);if(closeBaby)$('prompt').textContent=`. · TAME ${(PET_BY_ID.get(closeBaby.species)?.name||closeBaby.species).toUpperCase()}`;
-  if(location.hostname==='localhost'||location.hostname==='127.0.0.1'){const testAnimal=world.animals.filter(animal=>animal.baby&&animal.sleep&&!animal.owner&&animal.hp>0).sort((a,b)=>distance(a,me)-distance(b,me))[0];canvas.dataset.testAnimal=testAnimal?JSON.stringify({id:testAnimal.id,hp:testAnimal.hp,distance:distance(testAnimal,me),dx:testAnimal.x-me.x,dy:testAnimal.y-me.y,x:innerWidth/2+(testAnimal.x-game.camera.x),y:innerHeight/2+(testAnimal.y-game.camera.y)}):''}
+  const currentSeason=SEASONS[seasonView.timing.index],previousSeason=SEASONS[seasonView.timing.previous];drawSeasonOverlay(previousSeason,visualTime,1-seasonView.timing.blend);drawSeasonOverlay(currentSeason,visualTime,seasonView.timing.blend);drawMinimap(world,me);drawCrosshair();const closeBaby=world.animals.find(a=>a.baby&&a.sleep&&!a.owner&&a.hp>0&&distance(a,me)<80),selectedItem=ITEM_BY_ID.get(me.loadout?.[me.selected]),buildingSelected=selectedItem?.category==='building';$('prompt').classList.toggle('hidden',!closeBaby&&!buildingSelected);if(buildingSelected)$('prompt').textContent='R / WHEEL · ROTATE     CLICK · BUILD';else if(closeBaby)$('prompt').textContent=`. · TAME ${(PET_BY_ID.get(closeBaby.species)?.name||closeBaby.species).toUpperCase()}`;
+  if(location.hostname==='localhost'||location.hostname==='127.0.0.1'){const testAnimal=world.animals.filter(animal=>animal.baby&&animal.sleep&&!animal.owner&&animal.hp>0).sort((a,b)=>distance(a,me)-distance(b,me))[0],testStructure=world.structures[0];canvas.dataset.testAnimal=testAnimal?JSON.stringify({id:testAnimal.id,hp:testAnimal.hp,distance:distance(testAnimal,me),dx:testAnimal.x-me.x,dy:testAnimal.y-me.y,x:innerWidth/2+(testAnimal.x-game.camera.x),y:innerHeight/2+(testAnimal.y-game.camera.y)}):'';canvas.dataset.testPlayer=JSON.stringify({x:me.x,y:me.y});canvas.dataset.testStructure=testStructure?JSON.stringify({x:testStructure.x,y:testStructure.y,rotation:testStructure.rotation}):''}
 }
 function onScreen(entity){return Math.abs(entity.x-game.camera.x)<innerWidth*.7+100&&Math.abs(entity.y-game.camera.y)<innerHeight*.7+100;}
 function drawGround(world,season){
@@ -331,8 +343,8 @@ function drawPlayerAction(player){
   ctx.restore();
 }
 function drawPlacementPreview(player){
-  const item=ITEM_BY_ID.get(player.loadout?.[player.selected]);if(item?.category!=='building')return;const x=player.x+Math.cos(player.angle)*72,y=player.y+Math.sin(player.angle)*72,valid=canPay(player,item.cost||{})&&!game.world.structures.some(structure=>Math.hypot(structure.x-x,structure.y-y)<52);
-  ctx.save();ctx.globalAlpha=.48;ctx.translate(x,y);ctx.strokeStyle=valid?'#e9f59a':'#b84e43';ctx.fillStyle=valid?'rgba(104,145,77,.55)':'rgba(184,78,67,.55)';ctx.lineWidth=3;ctx.setLineDash([7,5]);ctx.beginPath();ctx.arc(0,0,34,0,TAU);ctx.fill();ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#fffde6';ctx.font='700 10px DM Mono';ctx.textAlign='center';ctx.fillText(valid?'CLICK TO BUILD':'BLOCKED',0,4);ctx.restore();
+  const item=ITEM_BY_ID.get(player.loadout?.[player.selected]);if(item?.category!=='building')return;const x=player.x+Math.cos(player.angle)*72,y=player.y+Math.sin(player.angle)*72,rotation=placementRotation(player),valid=canPay(player,item.cost||{})&&!game.world.structures.some(structure=>Math.hypot(structure.x-x,structure.y-y)<52),type=structureKind(item);
+  ctx.save();ctx.globalAlpha=.58;drawStructure({x,y,rotation,type});ctx.restore();ctx.save();ctx.translate(x,y);ctx.rotate(rotation);ctx.strokeStyle=valid?'#e9f59a':'#b84e43';ctx.lineWidth=3;ctx.setLineDash([7,5]);if(type==='wall'||type==='door')ctx.strokeRect(-37,-17,74,34);else ctx.strokeRect(-34,-34,68,68);ctx.restore();ctx.save();ctx.translate(x,y+48);ctx.fillStyle=valid?'#fffde6':'#b84e43';ctx.font='700 10px DM Mono';ctx.textAlign='center';ctx.fillText(valid?'CLICK TO BUILD':'BLOCKED',0,0);ctx.restore();canvas.dataset.previewRotation=String(rotation);
 }
 function drawAnimal(animal){
   ctx.save();ctx.translate(animal.x,animal.y);ctx.rotate(animal.angle);if(animal.boss){drawBossShape(ctx,animal);ctx.restore();drawBarWorld(animal.x,animal.y-62,animal.hp/animal.max,animal.species.replaceAll('-',' ').toUpperCase(),'#b84e43');return}
@@ -354,10 +366,10 @@ function drawPetShape(target,x,y,pet,level=0,angle=0,baby=false){
   target.fillStyle='#f7f1cf';target.beginPath();target.arc(21,-6,3.2,0,TAU);target.fill();target.fillStyle='#263322';target.beginPath();target.arc(22,-6,1.4,0,TAU);target.fill();
   if(level===2){target.strokeStyle=pet.accent;target.lineWidth=2/scale;target.beginPath();target.arc(0,0,28,0,TAU);target.stroke()}target.restore();
 }
-function drawBossShape(target,animal){const season=SEASONS[game.world?.season||0],pulse=1+Math.sin(game.world.time*2)*.04;target.scale(pulse,pulse);target.fillStyle=season.palette.background[0];target.strokeStyle='#263322';target.lineWidth=5;target.beginPath();for(let i=0;i<12;i++){const a=i/12*TAU,r=i%2?42:55;i?target.lineTo(Math.cos(a)*r,Math.sin(a)*r):target.moveTo(Math.cos(a)*r,Math.sin(a)*r)}target.closePath();target.fill();target.stroke();target.fillStyle=season.palette.detail[1];target.beginPath();target.arc(0,0,24,0,TAU);target.fill();target.stroke();target.fillStyle='#263322';target.beginPath();target.ellipse(8,-2,10,6,0,0,TAU);target.fill();target.fillStyle='#f7f1cf';target.beginPath();target.arc(11,-3,3,0,TAU);target.fill()}
-function drawSeasonOverlay(season,time){ctx.save();ctx.globalAlpha=.2;if(season.id==='winter'){ctx.fillStyle='#fff';for(let i=0;i<45;i++){const x=(i*97+time*18)%innerWidth,y=(i*53+time*25)%innerHeight;ctx.fillRect(x,y,3,3)}}else if(season.id==='darkness'){ctx.fillStyle='#151329';ctx.globalAlpha=.27;ctx.fillRect(0,0,innerWidth,innerHeight)}else if(season.id==='ocean'){ctx.strokeStyle='#d7f3e6';for(let y=30;y<innerHeight;y+=70){ctx.beginPath();for(let x=0;x<innerWidth;x+=20)ctx.lineTo(x,y+Math.sin(x*.03+time)*5);ctx.stroke()}}else if(season.id==='volcano'){ctx.fillStyle='#ff9a43';for(let i=0;i<25;i++){const x=(i*131+time*8)%innerWidth,y=(i*79-time*20+innerHeight*3)%innerHeight;ctx.fillRect(x,y,3,5)}}else if(season.id==='desert'){ctx.fillStyle='#f5df9c';for(let i=0;i<30;i++)ctx.fillRect((i*113+time*30)%innerWidth,(i*67)%innerHeight,12,2)}ctx.restore()}
+function drawBossShape(target,animal){const season=game.renderSeason||SEASONS[game.world?.season||0],pulse=1+Math.sin(game.world.time*2)*.04;target.scale(pulse,pulse);target.fillStyle=season.palette.background[0];target.strokeStyle='#263322';target.lineWidth=5;target.beginPath();for(let i=0;i<12;i++){const a=i/12*TAU,r=i%2?42:55;i?target.lineTo(Math.cos(a)*r,Math.sin(a)*r):target.moveTo(Math.cos(a)*r,Math.sin(a)*r)}target.closePath();target.fill();target.stroke();target.fillStyle=season.palette.detail[1];target.beginPath();target.arc(0,0,24,0,TAU);target.fill();target.stroke();target.fillStyle='#263322';target.beginPath();target.ellipse(8,-2,10,6,0,0,TAU);target.fill();target.fillStyle='#f7f1cf';target.beginPath();target.arc(11,-3,3,0,TAU);target.fill()}
+function drawSeasonOverlay(season,time,strength=1){if(strength<=0)return;ctx.save();ctx.globalAlpha=.2*strength;if(season.id==='winter'){ctx.fillStyle='#fff';for(let i=0;i<45;i++){const x=(i*97+time*18)%innerWidth,y=(i*53+time*25)%innerHeight;ctx.fillRect(x,y,3,3)}}else if(season.id==='darkness'){ctx.fillStyle='#151329';ctx.globalAlpha=.27*strength;ctx.fillRect(0,0,innerWidth,innerHeight)}else if(season.id==='ocean'){ctx.strokeStyle='#d7f3e6';for(let y=30;y<innerHeight;y+=70){ctx.beginPath();for(let x=0;x<innerWidth;x+=20)ctx.lineTo(x,y+Math.sin(x*.03+time)*5);ctx.stroke()}}else if(season.id==='volcano'){ctx.fillStyle='#ff9a43';for(let i=0;i<25;i++){const x=(i*131+time*8)%innerWidth,y=(i*79-time*20+innerHeight*3)%innerHeight;ctx.fillRect(x,y,3,5)}}else if(season.id==='desert'){ctx.fillStyle='#f5df9c';for(let i=0;i<30;i++)ctx.fillRect((i*113+time*30)%innerWidth,(i*67)%innerHeight,12,2)}ctx.restore()}
 function worldPlayerColor(id){return game.world.players[id]?.color||'#fff'}
-function drawStructure(s){ctx.save();ctx.translate(s.x,s.y);ctx.strokeStyle='#263322';ctx.lineWidth=3;
+function drawStructure(s){ctx.save();ctx.translate(s.x,s.y);ctx.rotate(s.rotation||0);ctx.strokeStyle='#263322';ctx.lineWidth=3;
   if(s.type==='wall'||s.type==='door'){ctx.fillStyle=s.type==='door'?'#b17b43':'#8b623a';ctx.fillRect(-33,-13,66,26);ctx.strokeRect(-33,-13,66,26);for(let x=-24;x<30;x+=16){ctx.beginPath();ctx.moveTo(x,-12);ctx.lineTo(x,12);ctx.stroke()}if(s.type==='door'){ctx.fillStyle='#e9b949';ctx.beginPath();ctx.arc(22,0,3,0,TAU);ctx.fill()}}
   else if(s.type==='spike'){ctx.fillStyle='#4e6737';for(let i=0;i<8;i++){ctx.rotate(TAU/8);ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(7,-8);ctx.lineTo(30,0);ctx.lineTo(7,8);ctx.closePath();ctx.fill();ctx.stroke()}}
   else if(s.type==='windmill'){ctx.fillStyle='#8b623a';ctx.fillRect(-7,-25,14,50);ctx.strokeRect(-7,-25,14,50);ctx.rotate((game.world.time||0)*.8);for(let i=0;i<4;i++){ctx.rotate(Math.PI/2);ctx.fillStyle='#f1efcf';ctx.fillRect(0,-6,34,12);ctx.strokeRect(0,-6,34,12)}}

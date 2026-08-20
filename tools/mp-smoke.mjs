@@ -54,10 +54,18 @@ try {
     if (await page.locator('#game').getAttribute('data-render-error')) throw new Error('multiplayer canvas reported a missing player');
   }
   await host.locator('#hotbar .slot').nth(2).click();
+  await host.mouse.move(800,360);await host.waitForTimeout(100);
+  const previewRotation=Number(await host.locator('#game').getAttribute('data-preview-rotation'));
+  await host.keyboard.press('KeyR');await host.waitForTimeout(100);
+  const rotatedPreview=Number(await host.locator('#game').getAttribute('data-preview-rotation'));
+  if(Math.abs(rotatedPreview-previewRotation-Math.PI/4)>.05)throw new Error('multiplayer building preview did not rotate');
   await host.mouse.move(800,360);await host.mouse.down();await host.waitForTimeout(120);await host.mouse.up();
   await host.waitForFunction(() => Number(document.querySelector('#game')?.dataset.structures) === 1);
   await guest.waitForFunction(() => Number(document.querySelector('#game')?.dataset.structures) === 1);
   if (await host.locator('#game').getAttribute('data-action') !== 'build') throw new Error('multiplayer building animation was not synchronized');
+  for(const page of [host,guest])if(Math.abs(Number(await page.locator('#game').getAttribute('data-structure-rotation'))-rotatedPreview)>.05)throw new Error('multiplayer wall rotation was not synchronized');
+  await host.keyboard.down('KeyD');await host.waitForTimeout(900);await host.keyboard.up('KeyD');await host.waitForTimeout(150);
+  if(Number(await host.locator('#game').getAttribute('data-player-x'))>=Number(await host.locator('#game').getAttribute('data-structure-x')))throw new Error('multiplayer owner walked through their wall');
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('Multiplayer smoke test passed');
 } finally { await browser.close(); stop(); }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { ITEMS, STARTING_ITEMS, AGE_CHOICES, getAgeChoices } from '../data.js';
+import { ITEMS, STARTING_ITEMS, AGE_CHOICES, SEASONS, getAgeChoices, getSeasonTiming } from '../data.js';
 
 const byId = new Map(ITEMS.map(item => [item.id, item]));
 assert.deepEqual(STARTING_ITEMS, ['hand','apple','wooden-wall','wooden-door','wooden-spike','wooden-windmill']);
@@ -27,6 +27,13 @@ assert.equal(inventory.find(item => item.slot === 'primary').id, 'golden-naginat
 choose('stone-bow');
 assert.equal(inventory.filter(item => item.slot === 'secondary').length, 1);
 assert.ok(byId.get('wooden-wall').cost.wood > 0);
+assert.deepEqual(SEASONS.map(season=>season.duration),[960,480,480,480,480,480]);
+assert.equal(getSeasonTiming(959.9).index,0);
+assert.equal(getSeasonTiming(960).index,1);
+assert.equal(getSeasonTiming(960).blend,0);
+assert.equal(getSeasonTiming(975).blend,.5);
+assert.equal(getSeasonTiming(1440).index,2);
+assert.equal(getSeasonTiming(3360).index,0);
 
 const fullPath = [...STARTING_ITEMS];
 for (let age=1;age<=27;age++) {

@@ -30,11 +30,21 @@ try {
   if (await page.locator('#hotbar .slot').count() !== 6) throw new Error('hotbar missing');
   await page.locator('#hotbar .slot').nth(2).click();
   if (!await page.locator('#hotbar .slot').nth(2).evaluate(element => element.classList.contains('selected'))) throw new Error('building slot was not selectable');
+  await page.mouse.move(780,360);await page.waitForTimeout(100);
+  const previewRotation = Number(await page.locator('#game').getAttribute('data-preview-rotation'));
+  await page.keyboard.press('KeyR');await page.waitForTimeout(100);
+  const rotatedPreview = Number(await page.locator('#game').getAttribute('data-preview-rotation'));
+  if (Math.abs(rotatedPreview-previewRotation-Math.PI/4)>.05) throw new Error('building preview did not rotate');
   const beforeStructures = Number(await page.locator('#game').getAttribute('data-structures'));
   await page.mouse.move(780, 360);await page.mouse.down();await page.waitForTimeout(100);await page.mouse.up();await page.waitForTimeout(100);
   const afterStructures = Number(await page.locator('#game').getAttribute('data-structures'));
   if (afterStructures !== beforeStructures + 1) throw new Error('clicking the selected building did not place it');
   if (await page.locator('#game').getAttribute('data-action') !== 'build') throw new Error('building action animation was not triggered');
+  const wall=JSON.parse(await page.locator('#game').getAttribute('data-test-structure'));
+  if(Math.abs(wall.rotation-rotatedPreview)>.05)throw new Error('placed wall did not retain preview rotation');
+  await page.keyboard.down('KeyD');await page.waitForTimeout(900);await page.keyboard.up('KeyD');await page.waitForTimeout(100);
+  const blockedPlayer=JSON.parse(await page.locator('#game').getAttribute('data-test-player'));
+  if(blockedPlayer.x>=wall.x)throw new Error('player walked through their own wall');
   await page.locator('#hotbar .slot').nth(0).click();
   let animal;
   for (let step=0;step<120;step++) {

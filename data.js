@@ -1,12 +1,20 @@
 // Shared clean-room game data. This module deliberately has no DOM or Worker globals.
 export const SEASONS = [
-  { id:'forest', name:'Forest', palette:{ background:['#183f35','#245746'], ground:['#467a45','#5f914e'], detail:['#a5ce66','#e4c56a'] }, resources:{ wood:['oak','birch','fallen-log'], stone:['moss-rock','slate'], food:['berry','mushroom'] }, duration:240, ambient:['leaf','fern','firefly'], bossId:'elder-bark' },
-  { id:'winter', name:'Frost / Winter', palette:{ background:['#b8d9df','#dcebed'], ground:['#d5e9e8','#eef6f3'], detail:['#79aeba','#f7fcfa'] }, resources:{ wood:['pine','frost-log'], stone:['ice-rock','granite'], food:['winterberry','root'] }, duration:210, ambient:['snowflake','ice-crystal','cold-mist'], bossId:'rimehorn' },
-  { id:'darkness', name:'Darkness', palette:{ background:['#111329','#201a38'], ground:['#2d2945','#3d3457'], detail:['#7865a9','#62c6ae'] }, resources:{ wood:['night-tree','hollow-stump'], stone:['moonstone','obsidian'], food:['glowcap','shade-fruit'] }, duration:180, ambient:['mote','wisp','shadow-grass'], bossId:'gloam-eye' },
-  { id:'desert', name:'Desert', palette:{ background:['#c06d36','#de9650'], ground:['#d9a45b','#edc57a'], detail:['#8f633f','#f5df9c'] }, resources:{ wood:['dry-palm','thorn-bush'], stone:['sandstone','flint'], food:['cactus-fruit','date'] }, duration:220, ambient:['dust','dry-grass','heat-haze'], bossId:'dune-maw' },
-  { id:'ocean', name:'Ocean', palette:{ background:['#0b5870','#117f8d'], ground:['#2c9a91','#61b9a1'], detail:['#c9e29c','#f0d58a'] }, resources:{ wood:['driftwood','mangrove'], stone:['coral-rock','shell-bed'], food:['kelp','coconut'] }, duration:200, ambient:['bubble','foam','sea-grass'], bossId:'deep-crown' },
-  { id:'volcano', name:'Volcano', palette:{ background:['#371b1b','#54251f'], ground:['#71352a','#914331'], detail:['#ff8a3d','#ffc65a'] }, resources:{ wood:['char-tree','ember-root'], stone:['basalt','sulfur'], food:['fire-fruit','ash-tuber'] }, duration:170, ambient:['ember','ash','steam-vent'], bossId:'caldera-heart' },
+  { id:'forest', name:'Forest', palette:{ background:['#183f35','#245746'], ground:['#467a45','#5f914e'], detail:['#a5ce66','#e4c56a'] }, resources:{ wood:['oak','birch','fallen-log'], stone:['moss-rock','slate'], food:['berry','mushroom'] }, duration:960, ambient:['leaf','fern','firefly'], bossId:'elder-bark' },
+  { id:'winter', name:'Frost / Winter', palette:{ background:['#b8d9df','#dcebed'], ground:['#d5e9e8','#eef6f3'], detail:['#79aeba','#f7fcfa'] }, resources:{ wood:['pine','frost-log'], stone:['ice-rock','granite'], food:['winterberry','root'] }, duration:480, ambient:['snowflake','ice-crystal','cold-mist'], bossId:'rimehorn' },
+  { id:'darkness', name:'Darkness', palette:{ background:['#111329','#201a38'], ground:['#2d2945','#3d3457'], detail:['#7865a9','#62c6ae'] }, resources:{ wood:['night-tree','hollow-stump'], stone:['moonstone','obsidian'], food:['glowcap','shade-fruit'] }, duration:480, ambient:['mote','wisp','shadow-grass'], bossId:'gloam-eye' },
+  { id:'desert', name:'Desert', palette:{ background:['#c06d36','#de9650'], ground:['#d9a45b','#edc57a'], detail:['#8f633f','#f5df9c'] }, resources:{ wood:['dry-palm','thorn-bush'], stone:['sandstone','flint'], food:['cactus-fruit','date'] }, duration:480, ambient:['dust','dry-grass','heat-haze'], bossId:'dune-maw' },
+  { id:'ocean', name:'Ocean', palette:{ background:['#0b5870','#117f8d'], ground:['#2c9a91','#61b9a1'], detail:['#c9e29c','#f0d58a'] }, resources:{ wood:['driftwood','mangrove'], stone:['coral-rock','shell-bed'], food:['kelp','coconut'] }, duration:480, ambient:['bubble','foam','sea-grass'], bossId:'deep-crown' },
+  { id:'volcano', name:'Volcano', palette:{ background:['#371b1b','#54251f'], ground:['#71352a','#914331'], detail:['#ff8a3d','#ffc65a'] }, resources:{ wood:['char-tree','ember-root'], stone:['basalt','sulfur'], food:['fire-fruit','ash-tuber'] }, duration:480, ambient:['ember','ash','steam-vent'], bossId:'caldera-heart' },
 ];
+
+export const SEASON_TRANSITION_SECONDS=30;
+export function getSeasonTiming(time){
+  const cycle=SEASONS.reduce((sum,season)=>sum+season.duration,0);let position=((time%cycle)+cycle)%cycle,index=0;
+  while(position>=SEASONS[index].duration){position-=SEASONS[index].duration;index++}
+  const transitioning=time>0&&position<SEASON_TRANSITION_SECONDS;
+  return {index,elapsed:position,remaining:SEASONS[index].duration-position,blend:transitioning?position/SEASON_TRANSITION_SECONDS:1,previous:(index+SEASONS.length-1)%SEASONS.length};
+}
 
 const PET_ROWS = [
   ['moss-pup','Moss Pup','forest','canine','#668c4f','#b4cf74','hound','trail-sense','common',92,14,128],
