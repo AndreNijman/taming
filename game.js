@@ -236,10 +236,11 @@ function performAction(player){
   const stats=item.stats||{}; player.cooldown=stats.cooldown||.48; const range=stats.range||72; const damage=stats.damage||stats.power||18;
   if(item.branch==='wrench'){const structure=game.world.structures.filter(s=>s.owner===player.id&&s.hp<s.max&&distance(player,s)<range).sort((a,b)=>distance(player,a)-distance(player,b))[0];if(structure&&player.resources.stone>0){player.resources.stone--;structure.hp=Math.min(structure.max,structure.hp+(stats.repair||20));}return;}
   let targets=[...game.world.resources.filter(r=>r.hp>0),...game.world.animals.filter(a=>a.hp>0&&a.owner!==player.id),...Object.values(game.world.players).filter(p=>p.id!==player.id&&!p.dead),...game.world.structures.filter(s=>s.owner!==player.id)];
-  targets=targets.filter(target=>distance(player,target)<range&&Math.abs(angleDiff(player.angle,Math.atan2(target.y-player.y,target.x-player.x)))<(item.category==='ranged'?.2:.7)).sort((a,b)=>distance(player,a)-distance(player,b));
+  const aimError=target=>Math.abs(angleDiff(player.angle,Math.atan2(target.y-player.y,target.x-player.x)));
+  targets=targets.filter(target=>distance(player,target)<range&&aimError(target)<(item.category==='ranged'?.2:.7)).sort((a,b)=>aimError(a)-aimError(b)||distance(player,a)-distance(player,b));
   const target=targets[0]; if(!target)return; player.target=target.id;
   if(target.type&&target.id.startsWith('r')) harvest(player,target,stats.power||10);
-  else { target.hp-=damage; if(target.hp<=0)defeat(player,target); }
+  else { target.hp-=damage;target.hitAt=game.world.time;if(target.hp<=0)defeat(player,target); }
 }
 function angleDiff(a,b){ return Math.atan2(Math.sin(b-a),Math.cos(b-a)); }
 function harvest(player,node,amount){ if(node.hp<=0)return; node.hp-=amount; const yields=node.type==='tree'?['wood',4]:node.type==='rock'?['stone',3]:node.type==='berry'?['food',2]:['gold',2]; player.resources[yields[0]]+=yields[1]; gainXp(player,4); if(node.hp<=0){ node.respawn=25+Math.random()*20; gainXp(player,18); } }
@@ -267,7 +268,7 @@ function updateInput() {
   game.input.x=(game.keys.has('d')||game.keys.has('arrowright')?1:0)-(game.keys.has('a')||game.keys.has('arrowleft')?1:0);
   game.input.y=(game.keys.has('s')||game.keys.has('arrowdown')?1:0)-(game.keys.has('w')||game.keys.has('arrowup')?1:0);
   game.input.attack=game.pointer.down||game.keys.has(' ')||game.autoAttack;
-  const me=game.world?.players?.[game.id]; if(me&&!game.aimLocked)game.input.angle=Math.atan2(game.pointer.y-innerHeight/2,game.pointer.x-innerWidth/2);
+  const me=game.world?.players?.[game.id];if(me&&!game.aimLocked){const screenX=innerWidth/2+(me.x-game.camera.x),screenY=innerHeight/2+(me.y-game.camera.y);game.input.angle=Math.atan2(game.pointer.y-screenY,game.pointer.x-screenX)}
 }
 addEventListener('keydown',event=>{
   const key=event.key.toLowerCase(); if($('chat-input')===document.activeElement)return;
@@ -307,6 +308,7 @@ function drawWorld(){
   ctx.save();ctx.translate(innerWidth/2-game.camera.x*zoom,innerHeight/2-game.camera.y*zoom);ctx.scale(zoom,zoom);drawGround(world,season);
   for(const node of world.resources)if(node.hp>0&&onScreen(node))drawResource(node,season);for(const structure of world.structures)if(onScreen(structure))drawStructure(structure);drawPlacementPreview(me);for(const animal of world.animals)if(animal.hp>0&&onScreen(animal))drawAnimal(animal);for(const player of Object.values(world.players))if(!player.dead&&onScreen(player))drawPlayer(player);ctx.restore();
   drawSeasonOverlay(season,world.time);drawMinimap(world,me);drawCrosshair();const closeBaby=world.animals.find(a=>a.baby&&a.sleep&&!a.owner&&a.hp>0&&distance(a,me)<80);$('prompt').classList.toggle('hidden',!closeBaby);if(closeBaby)$('prompt').textContent=`. · TAME ${(PET_BY_ID.get(closeBaby.species)?.name||closeBaby.species).toUpperCase()}`;
+  if(location.hostname==='localhost'||location.hostname==='127.0.0.1'){const testAnimal=world.animals.filter(animal=>animal.baby&&animal.sleep&&!animal.owner&&animal.hp>0).sort((a,b)=>distance(a,me)-distance(b,me))[0];canvas.dataset.testAnimal=testAnimal?JSON.stringify({id:testAnimal.id,hp:testAnimal.hp,distance:distance(testAnimal,me),dx:testAnimal.x-me.x,dy:testAnimal.y-me.y,x:innerWidth/2+(testAnimal.x-game.camera.x),y:innerHeight/2+(testAnimal.y-game.camera.y)}):''}
 }
 function onScreen(entity){return Math.abs(entity.x-game.camera.x)<innerWidth*.7+100&&Math.abs(entity.y-game.camera.y)<innerHeight*.7+100;}
 function drawGround(world,season){
@@ -335,7 +337,9 @@ function drawPlacementPreview(player){
 function drawAnimal(animal){
   ctx.save();ctx.translate(animal.x,animal.y);ctx.rotate(animal.angle);if(animal.boss){drawBossShape(ctx,animal);ctx.restore();drawBarWorld(animal.x,animal.y-62,animal.hp/animal.max,animal.species.replaceAll('-',' ').toUpperCase(),'#b84e43');return}
   const pet=PET_BY_ID.get(animal.species)||PETS[0];drawPetShape(ctx,0,0,pet,animal.level,animal.angle,animal.baby);if(animal.sleep){ctx.fillStyle='#263322';ctx.font='700 14px DM Mono';ctx.fillText('z',10,-24)}if(animal.owner){ctx.fillStyle=worldPlayerColor(animal.owner);ctx.beginPath();ctx.arc(-20,0,5,0,TAU);ctx.fill()}ctx.restore();
+  if(animal.hp<animal.max)drawBarWorld(animal.x,animal.y-38,animal.hp/animal.max,pet.name,animal.owner?'#e9b949':'#b84e43');if(game.world.time-(animal.hitAt??-99)<.24)drawHitEffect(animal.x,animal.y,animal.hitAt);
 }
+function drawHitEffect(x,y,hitAt){const phase=clamp((game.world.time-hitAt)/.24,0,1);ctx.save();ctx.translate(x,y);ctx.rotate(phase);ctx.strokeStyle=`rgba(255,244,174,${1-phase})`;ctx.lineWidth=4;for(let i=0;i<6;i++){ctx.rotate(TAU/6);ctx.beginPath();ctx.moveTo(25+phase*5,0);ctx.lineTo(38+phase*12,0);ctx.stroke()}ctx.restore();}
 function drawPetShape(target,x,y,pet,level=0,angle=0,baby=false){
   target.save();target.translate(x,y);const scale=baby?.82:level===2?1.48:level===1?1.2:1;target.scale(scale,scale);target.lineWidth=3/scale;target.strokeStyle='#263322';target.fillStyle='rgba(38,51,34,.18)';target.beginPath();target.ellipse(-3,13,24,9,0,0,TAU);target.fill();
   const winged=/wing|bird|bat|moth|insect/.test(`${pet.shape} ${pet.type}`),shelled=/shell|turtle|beetle|crab/.test(`${pet.shape} ${pet.type}`),long=/serpentine|eel|slender/.test(`${pet.shape} ${pet.type}`),horned=/horn|antler|tusk/.test(pet.shape);

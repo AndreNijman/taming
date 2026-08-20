@@ -35,7 +35,21 @@ try {
   const afterStructures = Number(await page.locator('#game').getAttribute('data-structures'));
   if (afterStructures !== beforeStructures + 1) throw new Error('clicking the selected building did not place it');
   if (await page.locator('#game').getAttribute('data-action') !== 'build') throw new Error('building action animation was not triggered');
-  await page.keyboard.down('KeyW'); await page.waitForTimeout(300); await page.keyboard.up('KeyW');
+  await page.locator('#hotbar .slot').nth(0).click();
+  let animal;
+  for (let step=0;step<120;step++) {
+    animal=JSON.parse(await page.locator('#game').getAttribute('data-test-animal'));
+    if (animal.distance<48) break;
+    const keys=[];
+    if(animal.dx>8)keys.push('KeyD');if(animal.dx< -8)keys.push('KeyA');if(animal.dy>8)keys.push('KeyS');if(animal.dy< -8)keys.push('KeyW');
+    for(const key of keys)await page.keyboard.down(key);await page.waitForTimeout(100);for(const key of keys)await page.keyboard.up(key);
+  }
+  if (!animal||animal.distance>=55) throw new Error('could not approach a wild animal');
+  const targetId=animal.id;
+  await page.mouse.move(animal.x,animal.y);await page.mouse.down();
+  for(let strike=0;strike<80;strike++){await page.waitForTimeout(100);animal=JSON.parse(await page.locator('#game').getAttribute('data-test-animal'));if(animal.id!==targetId)break}
+  await page.mouse.up();
+  if(animal.id===targetId)throw new Error('wild animal did not die from repeated attacks');
   await page.screenshot({ path:'/tmp/opencode/wildbound-smoke.png' });
   if(errors.length)throw new Error(errors.join('\n'));
   console.log('Smoke test passed');
