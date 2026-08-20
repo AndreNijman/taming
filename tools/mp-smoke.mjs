@@ -28,6 +28,14 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if(message.type()==='error') errors.push(message.text()) });
     await page.goto(`${baseUrl}/?relay=${encodeURIComponent(relay)}`);
+    const guestButton = page.locator('.skip button');
+    if (await guestButton.isVisible().catch(() => false)) {
+      await context.request.post('https://games.andrenijman.com/_guard/skip', {
+        form: { name:'Multiplayer smoke', return:`${baseUrl}/` },
+        maxRedirects:0,
+      });
+      await page.goto(`${baseUrl}/?relay=${encodeURIComponent(relay)}`);
+    }
   }
   await host.fill('#player-name','Host'); await host.click('#open-online');
   await host.fill('#room-name','Smoke Meadow'); await host.selectOption('#room-bots','2'); await host.click('#create-form button[type=submit]');
