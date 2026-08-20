@@ -8,7 +8,7 @@ A clean-room browser survival game inspired by the gathering, building and pet-t
 
 - Real-time top-down gathering and combat
 - Wood, stone, food and gold resources with respawning deposits
-- Branching age progression with 48 weapons, tools and buildings through age 15
+- Slot-based age progression through age 27: one primary branch, one secondary branch, one tool, food, walls, buildings and pads
 - Walls, traps and automated towers
 - 60 wild species across six seasonal rosters, sleeping babies, probabilistic taming and three pet evolutions
 - Six code-drawn seasonal world treatments and one boss encounter per season

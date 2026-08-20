@@ -83,59 +83,72 @@ export const PETS = PET_ROWS.map(([id,name,season,type,color,accent,shape,skill,
 
 export const PET_BY_ID = new Map(PETS.map(pet => [pet.id, pet]));
 
-const ITEM_ROWS = [
-  [0,'field-axe','Field Axe','tool',{wood:0,stone:0,food:0,gold:0},{power:12,range:68,cooldown:.4}],
-  [0,'stone-club','Stone Club','melee',{wood:8,stone:4},{damage:17,range:72,cooldown:.48}],
-  [0,'reed-screen','Reed Screen','building',{wood:12},{health:120,size:42}],
-  [1,'flint-spear','Flint Spear','melee',{wood:10,stone:8},{damage:23,range:96,cooldown:.55}],
-  [1,'gatherers-pick','Gatherer Pick','tool',{wood:8,stone:12},{power:18,range:64,cooldown:.5}],
-  [1,'campfire','Campfire','building',{wood:16,stone:6},{health:100,healing:2}],
-  [2,'reed-bow','Reed Bow','ranged',{wood:18,stone:4},{damage:18,range:280,cooldown:.72}],
-  [2,'hide-shield','Hide Shield','melee',{wood:14,food:8},{damage:12,block:18,range:60}],
-  [2,'palisade','Palisade','building',{wood:28},{health:260,size:50}],
-  [3,'iron-hatchet','Iron Hatchet','tool',{wood:14,stone:22,gold:3},{power:27,damage:21,range:70}],
-  [3,'thorn-sling','Thorn Sling','ranged',{wood:12,stone:16},{damage:22,range:310,cooldown:.65}],
-  [3,'briar-trap','Briar Trap','building',{wood:18,stone:8},{health:90,damage:28}],
-  [4,'broad-sword','Broad Sword','melee',{wood:12,stone:28,gold:6},{damage:34,range:82,cooldown:.5}],
-  [4,'long-bow','Long Bow','ranged',{wood:28,stone:12,gold:3},{damage:29,range:380,cooldown:.8}],
-  [4,'watch-post','Watch Post','building',{wood:35,stone:20},{health:300,vision:420}],
-  [5,'steel-pick','Steel Pick','tool',{wood:18,stone:35,gold:9},{power:39,range:66,cooldown:.42}],
-  [5,'hook-blade','Hook Blade','melee',{wood:15,stone:30,gold:8},{damage:38,range:76,slow:.15}],
-  [5,'stone-gate','Stone Gate','building',{wood:22,stone:44},{health:520,size:64}],
-  [6,'windlass-bow','Windlass Bow','ranged',{wood:34,stone:28,gold:12},{damage:43,range:420,cooldown:1.05}],
-  [6,'maul','Quarry Maul','melee',{wood:25,stone:46,gold:8},{damage:49,range:88,cooldown:.82}],
-  [6,'acorn-tower','Acorn Tower','building',{wood:48,stone:32,gold:10},{health:360,damage:16,range:310}],
-  [7,'harvest-scythe','Harvest Scythe','tool',{wood:28,stone:38,gold:14},{power:46,damage:35,range:92}],
-  [7,'twin-darts','Twin Darts','ranged',{wood:30,stone:20,gold:16},{damage:24,range:340,cooldown:.34}],
-  [7,'storehouse','Storehouse','building',{wood:55,stone:35,gold:8},{health:440,storage:300}],
-  [8,'falchion','Sun Falchion','melee',{wood:20,stone:48,gold:22},{damage:58,range:86,cooldown:.46}],
-  [8,'bolt-caster','Bolt Caster','ranged',{wood:42,stone:38,gold:20},{damage:61,range:460,cooldown:1.1}],
-  [8,'reinforced-wall','Reinforced Wall','building',{wood:48,stone:65,gold:12},{health:760,size:54}],
-  [9,'gem-drill','Gem Drill','tool',{wood:30,stone:62,gold:28},{power:62,range:70,cooldown:.32}],
-  [9,'war-pike','War Pike','melee',{wood:34,stone:55,gold:25},{damage:65,range:116,cooldown:.58}],
-  [9,'healing-totem','Healing Totem','building',{wood:60,stone:42,food:30,gold:18},{health:320,healing:7}],
-  [10,'storm-bow','Storm Bow','ranged',{wood:58,stone:34,gold:36},{damage:70,range:500,cooldown:.76}],
-  [10,'crusher','Siege Crusher','melee',{wood:42,stone:72,gold:26},{damage:79,range:94,cooldown:.9}],
-  [10,'ballista','Ballista','building',{wood:75,stone:58,gold:30},{health:520,damage:55,range:520}],
-  [11,'master-axe','Master Axe','tool',{wood:44,stone:70,gold:40},{power:78,damage:54,range:76}],
-  [11,'crescent-blade','Crescent Blade','melee',{wood:38,stone:66,gold:45},{damage:82,range:98,cooldown:.43}],
-  [11,'vault','Resource Vault','building',{wood:70,stone:90,gold:28},{health:920,storage:800}],
-  [12,'repeater','Repeater','ranged',{wood:65,stone:52,gold:54},{damage:45,range:440,cooldown:.28}],
-  [12,'guardian-hammer','Guardian Hammer','melee',{wood:50,stone:88,gold:46},{damage:91,range:90,stun:.2}],
-  [12,'ward-spire','Ward Spire','building',{wood:72,stone:82,gold:50},{health:610,shield:120}],
-  [13,'star-pick','Star Pick','tool',{wood:55,stone:96,gold:64},{power:96,range:74,cooldown:.26}],
-  [13,'gale-lance','Gale Lance','melee',{wood:60,stone:78,gold:68},{damage:102,range:132,cooldown:.52}],
-  [13,'storm-turret','Storm Turret','building',{wood:86,stone:90,gold:62},{health:680,damage:72,range:560}],
-  [14,'comet-bow','Comet Bow','ranged',{wood:82,stone:68,gold:85},{damage:108,range:610,cooldown:.68}],
-  [14,'titan-cleaver','Titan Cleaver','melee',{wood:68,stone:105,gold:76},{damage:119,range:108,cooldown:.72}],
-  [14,'citadel-wall','Citadel Wall','building',{wood:95,stone:135,gold:55},{health:1400,size:60}],
-  [15,'world-shaper','World Shaper','tool',{wood:90,stone:125,gold:110},{power:125,damage:92,range:84}],
-  [15,'dawn-rail','Dawn Rail','ranged',{wood:105,stone:90,gold:130},{damage:138,range:680,cooldown:.9}],
-  [15,'beacon-keep','Beacon Keep','building',{wood:140,stone:160,food:60,gold:120},{health:1800,damage:90,range:600}],
+const item = (id,name,age,slot,branch,category,stats={},cost={}) => ({id,name,age,slot,branch,category,stats,cost});
+const primaryStats = {
+  sword:{damage:30,range:78,cooldown:.75,power:3}, axe:{damage:34,range:68,cooldown:.96,power:5},
+  hammer:{damage:22,range:70,cooldown:.55,power:7}, daggers:{damage:17,range:57,cooldown:.34,power:2},
+  spear:{damage:20,range:106,cooldown:.8,power:3}, gloves:{damage:14,range:52,cooldown:.27,power:2},
+};
+const title = value => value.replaceAll('-',' ').replace(/\b\w/g,letter=>letter.toUpperCase());
+const items = [
+  item('hand','Hand',0,'primary','hand','melee',{damage:8,range:55,cooldown:.45,power:1}),
+  item('apple','Apple',0,'food','apple','food',{healing:20}),
+  item('wooden-wall','Wooden Wall',0,'wall','wall','building',{health:150},{wood:10}),
+  item('wooden-door','Wooden Door',0,'door','door','building',{health:120},{wood:10}),
+  item('wooden-spike','Wooden Spike',0,'spike','spike','building',{health:70,damage:10},{wood:20}),
+  item('wooden-windmill','Wooden Windmill',0,'windmill','windmill','building',{health:100,income:1},{wood:50}),
 ];
-
-export const ITEMS = ITEM_ROWS.map(([age,id,name,category,cost,stats]) => ({ id, name, age, category, cost, stats }));
-
-export const AGE_CHOICES = Object.fromEntries(
-  Array.from({ length:16 }, (_,age) => [age, ITEMS.filter(item => item.age === age).map(item => item.id)]),
+for(const branch of Object.keys(primaryStats))items.push(item(`stone-${branch}`,`Stone ${title(branch)}`,1,'primary',branch,'melee',primaryStats[branch]));
+items.push(
+  item('cookie','Cookie',2,'food','food','food',{healing:35}),item('stone-wall','Stone Wall',2,'wall','wall','building',{health:300},{stone:15}),
+  item('stone-door','Stone Door',3,'door','door','building',{health:260},{stone:15}),item('stone-spike','Stone Spike',3,'spike','spike','building',{health:110,damage:18},{stone:25}),
+  item('big-stone-spike','Big Stone Spike',3,'spike','big-spike','building',{health:180,damage:28},{stone:40,gold:5}),item('stone-windmill','Stone Windmill',3,'windmill','windmill','building',{health:220,income:2},{wood:25,stone:35}),
+  item('normal-magic-tower','Normal Magic Tower',3,'tower','magic-tower','building',{health:240,damage:12,range:280},{wood:30,stone:20,gold:10}),item('wooden-turret','Wooden Turret',3,'turret','turret','building',{health:180,damage:14,range:320},{wood:35,gold:8}),
+  item('stone-bow','Stone Bow',4,'secondary','bow','ranged',{damage:18,range:310,cooldown:.78}),item('stone-shield','Stone Shield',4,'secondary','shield','shield',{block:22}),item('stone-wrench','Stone Wrench',4,'secondary','wrench','tool',{power:5,repair:20,range:68,cooldown:.45}),
+  item('appletor','Appletor',5,'tool','appletor','tool',{tameBonus:.12}),item('slingshot','Slingshot',5,'tool','slingshot','ranged',{damage:8,range:240,cooldown:.5,tameBonus:.08}),item('bug-net','Bug Net',5,'tool','bug-net','tool',{range:70}),item('saddle','Saddle',5,'tool','saddle','tool',{mount:true}),
+  item('boost-pad','Boost Pad',8,'pad','boost-pad','building',{health:100,boost:.3},{wood:20,stone:15,gold:10}),item('bear-trap','Bear Trap',8,'pad','bear-trap','building',{health:110,damage:35},{wood:15,stone:25,gold:8}),item('heal-pad','Heal Pad',8,'pad','heal-pad','building',{health:120,healing:5},{wood:20,stone:20,gold:15}),
+  item('croissant','Croissant',7,'food','instant-food','food',{healing:15,foodUse:10}),item('sandwich','Sandwich',7,'food','regen-food','food',{healing:8,healOverTime:24,foodUse:12}),item('steak','Steak',7,'food','defense-food','food',{healing:12,defense:.1,foodUse:12}),item('toffee-candy','Toffee Candy',7,'food','speed-food','food',{healing:12,speedBoost:.05,foodUse:10}),
+  item('golden-wall','Golden Wall',7,'wall','wall','building',{health:430},{stone:22,gold:8}),
+  item('waffle','Waffle',12,'food','instant-food','food',{healing:18,foodUse:12}),item('salad','Salad',12,'food','regen-food','food',{healing:10,healOverTime:36,foodUse:15}),item('eggs','Eggs',12,'food','defense-food','food',{healing:14,defense:.15,foodUse:14}),item('biscuit','Biscuit',12,'food','speed-food','food',{healing:12,speedBoost:.1,foodUse:12}),item('ruby-wall','Ruby Wall',12,'wall','wall','building',{health:560},{stone:28,gold:12}),
+  item('cake','Cake',16,'food','instant-food','food',{healing:22,foodUse:15}),item('mushroom-soup','Mushroom Soup',16,'food','regen-food','food',{healing:12,healOverTime:48,foodUse:18}),item('meatballs','Meatballs',16,'food','defense-food','food',{healing:16,defense:.2,foodUse:18}),item('roll-cake','Roll Cake',16,'food','speed-food','food',{healing:15,speedBoost:.15,foodUse:16}),item('amethyst-wall','Amethyst Wall',16,'wall','wall','building',{health:720},{stone:36,gold:18}),
+  item('sapphire-wall','Sapphire Wall',20,'wall','wall','building',{health:920},{stone:46,gold:26}),item('amber-wall','Amber Wall',23,'wall','wall','building',{health:1100},{stone:55,gold:35}),
 );
+const primaryBranches={sword:['sword','katana'],axe:['axe','labrys'],hammer:['hammer','pickaxe'],daggers:['daggers','cleaver'],spear:['spear','naginata'],gloves:['gloves']};
+for(const [root,branches] of Object.entries(primaryBranches))for(const branch of branches){const base=primaryStats[root];items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,6,'primary',branch,'melee',{...base,damage:Math.round(base.damage*1.15),power:base.power+1}));for(const [age,tier,mult] of [[11,'ruby',1.28],[15,'amethyst',1.4],[19,'sapphire',1.52],[22,'amber',1.65]])items.push(item(`${tier}-${branch}`,`${title(tier)} ${title(branch)}`,age,'primary',branch,'melee',{...base,damage:Math.round(base.damage*mult),power:base.power+Math.floor(mult*2)}))}
+for(const branch of ['bow','crossbow','musket','minigun'])items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,10,'secondary',branch,'ranged',{damage:branch==='musket'?40:branch==='crossbow'?31:branch==='minigun'?9:24,range:branch==='musket'?430:350,cooldown:branch==='minigun'?.18:branch==='musket'?1.25:.7}));
+for(const branch of ['shield','crystal-shield','spike-shield'])items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,10,'secondary',branch,'shield',{block:branch==='crystal-shield'?40:30,damage:branch==='spike-shield'?12:0}));
+items.push(item('golden-wrench','Golden Wrench',10,'secondary','wrench','tool',{power:8,repair:35,range:72,cooldown:.4}));
+for(const branch of ['bow','crossbow','musket','minigun','shield','crystal-shield','spike-shield','wrench'])for(const [age,tier] of [[14,'ruby'],[18,'amethyst'],[21,'sapphire'],[24,'amber']]){const base=items.find(entry=>entry.id===`golden-${branch}`);if(base)items.push(item(`${tier}-${branch}`,`${title(tier)} ${title(branch)}`,age,'secondary',branch,base.category,{...base.stats,damage:Math.round((base.stats.damage||0)*(1+(age-10)*.04)),block:Math.round((base.stats.block||0)*(1+(age-10)*.03))}))}
+for(const baseId of ['stone-door','stone-spike','big-stone-spike','stone-windmill','normal-magic-tower','wooden-turret']){const base=items.find(entry=>entry.id===baseId);for(const [age,tier,mult] of [[9,'golden',1.3],[13,'ruby',1.6],[17,'amethyst',1.9],[20,'sapphire',2.25],[23,'amber',2.6],[27,'emerald',3]])items.push(item(`${tier}-${base.branch}`,`${title(tier)} ${title(base.branch)}`,age,base.slot,base.branch,'building',{...base.stats,health:Math.round((base.stats.health||100)*mult),damage:Math.round((base.stats.damage||0)*mult)},Object.fromEntries(Object.entries(base.cost).map(([key,value])=>[key,Math.round(value*mult)]))))}
+for(const branch of ['appletor','slingshot','bug-net','saddle']){const base=items.find(entry=>entry.id===branch);items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,25,'tool',branch,base.category,{...base.stats,tameBonus:(base.stats.tameBonus||0)+.1}))}
+for(const branch of ['boost-pad','bear-trap','heal-pad']){const base=items.find(entry=>entry.id===branch);items.push(item(`big-${branch}`,`Big ${title(branch)}`,26,'pad',branch,'building',{...base.stats,health:base.stats.health*2},Object.fromEntries(Object.entries(base.cost).map(([key,value])=>[key,Math.round(value*1.8)]))),item(`strong-${branch}`,`Strong ${title(branch)}`,26,'pad',branch,'building',{...base.stats,damage:(base.stats.damage||0)*1.8,healing:(base.stats.healing||0)*1.8,boost:(base.stats.boost||0)*1.5},Object.fromEntries(Object.entries(base.cost).map(([key,value])=>[key,Math.round(value*1.6)]))))}
+
+export const ITEMS=items;
+export const STARTING_ITEMS=['hand','apple','wooden-wall','wooden-door','wooden-spike','wooden-windmill'];
+export const AGE_CHOICES={
+  1:['stone-sword','stone-axe','stone-hammer','stone-daggers','stone-spear','stone-gloves'],
+  2:['cookie','stone-wall'],
+  3:['stone-door','stone-spike','big-stone-spike','stone-windmill','normal-magic-tower','wooden-turret'],
+  4:['stone-bow','stone-shield','stone-wrench'],
+  5:['appletor','slingshot','bug-net','saddle'],
+  7:['croissant','sandwich','steak','toffee-candy','golden-wall'],
+  8:['boost-pad','bear-trap','heal-pad'],
+};
+
+const ITEM_LOOKUP=new Map(ITEMS.map(entry=>[entry.id,entry]));
+const PRIMARY_EVOLUTIONS={sword:['sword','katana'],axe:['axe','labrys'],hammer:['hammer','pickaxe'],daggers:['daggers','cleaver'],spear:['spear','naginata'],gloves:['gloves']};
+export function getAgeChoices(age,loadout){
+  const current=slot=>ITEM_LOOKUP.get(loadout.find(id=>ITEM_LOOKUP.get(id)?.slot===slot));
+  if(age===6){const branch=current('primary')?.branch||'sword';return(PRIMARY_EVOLUTIONS[branch]||[branch]).map(name=>`golden-${name}`)}
+  if(age===10){const branch=current('secondary')?.branch;if(branch==='bow')return['golden-bow','golden-crossbow','golden-musket','golden-minigun'];if(branch==='shield')return['golden-shield','golden-crystal-shield','golden-spike-shield'];if(branch==='wrench')return['golden-wrench'];return[]}
+  const primaryTier={11:'ruby',15:'amethyst',19:'sapphire',22:'amber'}[age];if(primaryTier)return[`${primaryTier}-${current('primary')?.branch}`];
+  const secondaryTier={14:'ruby',18:'amethyst',21:'sapphire',24:'amber'}[age];if(secondaryTier)return[`${secondaryTier}-${current('secondary')?.branch}`];
+  if(age===7)return loadout.includes('cookie')?['croissant','sandwich','steak','toffee-candy']:loadout.includes('stone-wall')?['golden-wall']:[];
+  if(age===12||age===16){const food=current('food'),wall=current('wall');if(food?.age>0){const ids={12:{'instant-food':'waffle','regen-food':'salad','defense-food':'eggs','speed-food':'biscuit'},16:{'instant-food':'cake','regen-food':'mushroom-soup','defense-food':'meatballs','speed-food':'roll-cake'}};return[ids[age][food.branch]].filter(Boolean)}if(wall?.age>0)return[age===12?'ruby-wall':'amethyst-wall']}
+  const building=loadout.map(id=>ITEM_LOOKUP.get(id)).filter(entry=>entry?.category==='building'&&['door','spike','windmill','tower','turret'].includes(entry.slot)&&entry.age>0).sort((a,b)=>b.age-a.age)[0];
+  if(age===23&&current('wall')?.id==='sapphire-wall')return['amber-wall'];
+  const buildingTier={9:'golden',13:'ruby',17:'amethyst',20:'sapphire',23:'amber',27:'emerald'}[age];if(buildingTier&&building){const upgrade=`${buildingTier}-${building.branch}`;if(age===20&&current('wall')?.age>0)return[upgrade,'sapphire-wall'];return[upgrade]}
+  if(age===25){const tool=current('tool');return tool?[`golden-${tool.branch}`]:[]}
+  if(age===26){const pad=current('pad');return pad?[`big-${pad.branch}`,`strong-${pad.branch}`]:[]}
+  return AGE_CHOICES[age]||[];
+}

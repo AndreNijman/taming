@@ -2,7 +2,11 @@ import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
 
 const server = spawn('npx', ['serve', '.', '-l', '4173'], { stdio:'ignore' });
-await new Promise(resolve => setTimeout(resolve, 1200));
+for (let attempt=0;attempt<40;attempt++) {
+  try { if ((await fetch('http://localhost:4173')).ok) break; } catch {}
+  if (attempt===39) throw new Error('static server did not become ready');
+  await new Promise(resolve => setTimeout(resolve, 250));
+}
 const browser = await chromium.launch({ headless:true });
 try {
   const page = await browser.newPage({ viewport:{ width:1280, height:720 } });

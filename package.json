@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "serve": "npx serve . -l 4173",
-    "check": "node --check game.js && node --check worker.js",
+    "check": "node --check game.js && node --check worker.js && node tools/progression-test.mjs",
     "test": "node tools/smoke.mjs",
     "test:mp": "node tools/mp-smoke.mjs",
     "deploy": "wrangler deploy"
