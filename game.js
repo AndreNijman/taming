@@ -94,7 +94,7 @@ function connect(action, roomName, password = '', settings = {}) {
   const ws = new WebSocket(url), pinger = new NetPing();
   const timer = setTimeout(() => ws.close(), 10000);
   ws.onopen = () => ws.send(JSON.stringify({ t:action, room, password, name:playerName(), settings }));
-  ws.onmessage = event => handleMessage(JSON.parse(event.data));
+  ws.onmessage = event => { const message = JSON.parse(event.data); if (message.t === 'welcome') clearTimeout(timer); handleMessage(message); };
   ws.onerror = () => $('online-error').textContent = 'Could not reach the multiplayer relay.';
   ws.onclose = () => {
     clearTimeout(timer);
