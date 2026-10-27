@@ -11,6 +11,8 @@
     "test:mp": "node tools/mp-smoke.mjs",
     "test:latency": "node tests/latency/rooms.test.mjs",
     "latency:harness": "node tests/latency/harness.mjs",
+    "test:dev": "node tests/dev/dev-join.test.mjs",
+    "test:dev-smoke": "node tests/dev/dev-smoke.mjs",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
