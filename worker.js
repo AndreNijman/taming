@@ -1,6 +1,7 @@
 import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js';
 import { NetStats, sendNetLog, coloOf } from './netstats.js';
 import { REGIONS, playerWhere, withWhere, whereOf, chooseRegion, newShard, shardRegion, roomStub, regionOfColo } from './netplace.js';
+import { verifyDevPass } from './netdev.js';
 
 const WORLD_W = 3200, WORLD_H = 2400;
 const TICK_MS = 50, SNAPSHOT_MS = 100, ROOM_TTL = 45 * 60_000;
@@ -9,6 +10,7 @@ const COLORS = ['#f0c95d','#79a966','#d96f59','#6fa8a4','#977ab2','#d99555','#7b
 const BOT_NAMES = ['Fern','Kestrel','Mochi','Bramble','Juniper','Pip','Rowan','Clover','Wren','Taro','Mallow','Ash'];
 const ITEM_BY_ID = new Map(ITEM_CATALOG.map(item => [item.id, item]));
 const encoder = new TextEncoder();
+const DEV_HOST = 'wildbound.andrenijman.com'; // dev passes (netdev.js) are only valid for this host
 
 function cleanName(value, fallback = 'Wanderer', max = 16) {
   const name = String(value || '').replace(/[^a-z0-9 _-]/gi, '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -127,18 +129,35 @@ export class GameRoom {
     const seat=session.ticket&&this.tickets?.get(session.ticket);
     if(seat){this.tickets.delete(session.ticket);this.seatPlayer(session,seat.id,seat.name,seat.color);if(!this.tickets.size)this.startAdopted();return}
     const requested=cleanName(message.room,'',24),key=roomKey(requested);if(key.length<3){this.reject(session,'Invalid lobby name');return}
+    // A dev (a valid games-guard pass in message.dev) joins past the password, the player limit and a running expedition; anything else is an ordinary player.
+    const dev=await verifyDevPass(message.dev,DEV_HOST,{publicKey:this.env.DEV_TEST_PUBLIC_KEY||undefined});
     if(message.t==='create'){
       if(this.room||this.players.size){this.reject(session,'A lobby with that name already exists');return}
       this.room=requested;this.key=key;this.settings={max:clamp(Math.round(message.settings?.max||8),2,16),bots:clamp(Math.round(message.settings?.bots||0),0,8)};this.settings.bots=Math.min(this.settings.bots,this.settings.max-1);this.password=await hash(message.password||'');
     }else{
       if(!this.room){this.reject(session,'No open lobby has that name');return}
-      if(this.started){this.reject(session,'That expedition has already started');return}
-      if(this.players.size>=this.settings.max){this.reject(session,'That lobby is full');return}
-      if(this.password!==await hash(message.password||'')){this.reject(session,'Wrong lobby password');return}
+      if(!dev){
+        if(this.started){this.reject(session,'That expedition has already started');return}
+        if(this.players.size>=this.settings.max){this.reject(session,'That lobby is full');return}
+        if(this.password!==await hash(message.password||'')){this.reject(session,'Wrong lobby password');return}
+      }
     }
-    const id=`p${this.nextId++}`;this.seatPlayer(session,id,cleanName(message.name),COLORS[(this.nextId-2)%COLORS.length]);await this.syncRegistry();
+    const id=`p${this.nextId++}`,name=cleanName(message.name),color=COLORS[(this.nextId-2)%COLORS.length];
+    if(this.started&&this.world)this.seatLate(session,id,name,color);else this.seatPlayer(session,id,name,color);
+    if(dev)this.broadcast({t:'dev-joined',name:dev.name});
+    await this.syncRegistry();
   }
   seatPlayer(session,id,name,color){const player=newPlayer(id,name,0,0,color);this.players.set(id,player);session.id=id;session.ready=true;if(!this.host)this.host=id;this.send(session.socket,{t:'welcome',id,host:id===this.host});this.sendLobby()}
+  // Only a dev gets into a running expedition: a fresh tamer dropped somewhere on the range, as a respawn would be,
+  // and an ordinary seat in the lag log. The range keeps its population: when tamers would now outnumber the
+  // lobby's max, one roaming tamer (bot) leaves and its pets go wild. Everyone else is playing, so no lobby message.
+  seatLate(session,id,name,color){
+    const player=newPlayer(id,name,200+Math.random()*(WORLD_W-400),200+Math.random()*(WORLD_H-400),color);this.players.set(id,player);this.world.players[id]=player;session.id=id;session.ready=true;
+    const bots=Object.values(this.world.players).filter(p=>p.bot);
+    if(bots.length&&Object.keys(this.world.players).length>this.settings.max){const bot=bots[bots.length-1];delete this.world.players[bot.id];for(const animal of this.world.animals)if(animal.owner===bot.id)animal.owner=null;this.event(`${bot.name} left the range to make room for ${name}`)}
+    this.net?.seat(id,name,session.where);
+    this.send(session.socket,{t:'welcome',id,host:false});this.send(session.socket,{t:'start',you:id,world:this.serializedWorld()});
+  }
   reject(session,message){this.send(session.socket,{t:'error',message});setTimeout(()=>session.socket.close(1008,message),20)}
   remove(session){
     this.sessions.delete(session.socket);if(!session.id){if(!this.sessions.size&&!this.players.size&&!this.tickets)this.stopTimer();return}const wasHost=session.id===this.host;this.players.delete(session.id);if(this.world)delete this.world.players[session.id];
@@ -191,7 +210,7 @@ export class GameRoom {
     this.removeRegistry();for(const session of this.sessions.values())if(session.ready)this.send(session.socket,{t:'start',you:session.id,world:this.serializedWorld()});this.lastTick=Date.now();this.startNetLog();
   }
   // One lag record per expedition, from the host's start until the room empties
-  // (no one can join a started expedition), sent to games-guard's NetLog.
+  // (only a dev can join a started expedition), sent to games-guard's NetLog.
   startNetLog(){this.endNetLog('abandoned');this.net=new NetStats();this.netLoopAt=0;for(const player of this.players.values())this.net.seat(player.id,player.name,this.sessionOf(player.id)?.where);this.netBots=Object.values(this.world.players).filter(p=>p.bot).length;this.whereColo()}
   endNetLog(outcome){const net=this.net;this.net=null;if(!net)return;const record=net.record({code:this.room,mode:`${net.seats.size}p + ${this.netBots} bots · survival`,outcome,colo:this.colo,region:shardRegion(this.shard)||regionOfColo(this.colo),moved:this.shard?{from:this.movedFrom,to:shardRegion(this.shard)}:null});if(record.runTime<10)return;sendNetLog(this.env,this.ctx,'wildbound',record)}
   ensureTimer(){if(this.timer)return;this.timer=setInterval(()=>this.tick(),TICK_MS)}
