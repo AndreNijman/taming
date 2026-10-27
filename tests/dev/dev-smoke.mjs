@@ -84,6 +84,7 @@ try {
   await host.locator('.roster-row').nth(1).waitFor();
   await host.click('#start-match');
   await host.locator('body.playing').waitFor(); await guest.locator('body.playing').waitFor();
+  await host.waitForFunction(() => !document.getElementById('toast').classList.contains('on'), null, { timeout:4000 });
   await host.waitForFunction(() => document.querySelector('#game')?.dataset.tamers);
   const before = await tamers(host);
   assert.deepEqual(before.filter(t => t.startsWith('human:')).sort(), ['human:Guest', 'human:Host']);
@@ -103,6 +104,7 @@ try {
   await andre.goto(`${ORIGIN}/?join=${encodeURIComponent(room)}&relay=${encodeURIComponent(relay)}`);
   await andre.locator('body.playing').waitFor({ timeout:10000 });
   await Promise.all([host, guest, andre].map(banner));
+  for (const page of [host, guest]) assert.ok(!(await page.evaluate(() => { const toast = document.getElementById('toast'); return toast.classList.contains('on') && toast.textContent.startsWith('Gather'); })), 'the players did not re-begin their world');
   for (const [name, page] of Object.entries({ host, guest, andre })) await page.screenshot({ path:join(shots, `dev-joined-${name}.png`) });
   assert.ok(!(await andre.evaluate(() => location.search)).includes('join='), 'the join link is cleared');
   assert.deepEqual(await andre.evaluate(() => window.__gamesPlayer), { name:'Wanderer', room }, "the dev's page reports its name and room");

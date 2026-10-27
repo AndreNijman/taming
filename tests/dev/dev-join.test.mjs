@@ -165,6 +165,7 @@ try {
     const record = (await until(() => records().find(r => r.record.code === room), 15_000, 'the lag record')).record;
     assert.deepEqual(record.seats.map(s => s.name).sort(), ['Andre', 'Guest', 'Host']);
     assert.equal(record.moved, null, 'a late dev does not move the room');
+    assert.equal(record.mode, '3p + 1 bots · survival', 'the bot that stepped aside is not counted');
     console.log('running: ok', JSON.stringify({ mode:record.mode, seats:record.seats.map(s => s.name) }));
   }
 

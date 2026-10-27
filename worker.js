@@ -154,7 +154,7 @@ export class GameRoom {
   seatLate(session,id,name,color){
     const player=newPlayer(id,name,200+Math.random()*(WORLD_W-400),200+Math.random()*(WORLD_H-400),color);this.players.set(id,player);this.world.players[id]=player;session.id=id;session.ready=true;
     const bots=Object.values(this.world.players).filter(p=>p.bot);
-    if(bots.length&&Object.keys(this.world.players).length>this.settings.max){const bot=bots[bots.length-1];delete this.world.players[bot.id];for(const animal of this.world.animals)if(animal.owner===bot.id)animal.owner=null;this.event(`${bot.name} left the range to make room for ${name}`)}
+    if(bots.length&&Object.keys(this.world.players).length>this.settings.max){const bot=bots[bots.length-1];delete this.world.players[bot.id];this.netBots=Math.max(0,this.netBots-1);for(const animal of this.world.animals)if(animal.owner===bot.id)animal.owner=null;this.event(`${bot.name} left the range to make room for ${name}`)}
     this.net?.seat(id,name,session.where);
     this.send(session.socket,{t:'welcome',id,host:false});this.send(session.socket,{t:'start',you:id,world:this.serializedWorld()});
   }
