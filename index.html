@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Anybody:wdth,wght@75..125,500..800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260820-3">
+  <link rel="stylesheet" href="style.css?v=20261027-1">
 </head>
 <body>
   <main id="shell">
@@ -85,7 +85,7 @@
       <header class="screen-head"><button id="leave-lobby" class="back" aria-label="Leave lobby">←</button><div><span>ASSEMBLY POINT</span><h2 id="lobby-name">Lobby</h2></div></header>
       <div class="lobby-sheet">
         <div><div class="panel-number">TAMERS</div><div id="roster" class="roster"></div></div>
-        <div class="lobby-rules"><div class="panel-number">RANGE CONDITIONS</div><p>One continuous world</p><p>Friendly fire enabled</p><p>Pets persist until defeat</p><p id="lobby-cpu"></p></div>
+        <div class="lobby-rules"><div class="panel-number">RANGE CONDITIONS</div><p>One continuous world</p><p>Friendly fire enabled</p><p>Pets persist until defeat</p><p id="lobby-cpu"></p><p id="lobby-region"></p></div>
       </div>
       <button id="start-match" class="primary start-button">START EXPEDITION</button>
       <p id="lobby-wait" class="muted">Only the lobby creator can start.</p>
@@ -104,6 +104,7 @@
       <div id="hotbar" class="hotbar"></div>
       <div id="feed" class="feed"></div>
       <div id="prompt" class="prompt hidden"></div>
+      <div id="ping" class="ping hidden" title="Your ping to the range"></div>
       <button id="menu-button" class="menu-button" aria-label="Pause">☰</button>
       <div id="chat" class="chat"><div id="chat-lines"></div><input id="chat-input" class="hidden" maxlength="100" placeholder="Message everyone..."></div>
       <div id="mobile-controls"><div id="stick"><i></i></div><button id="mobile-action">HIT</button><button id="mobile-tame">TAME</button></div>
@@ -132,6 +133,6 @@
     </section>
     <div id="toast" role="status" aria-live="polite"></div>
   </main>
-  <script type="module" src="game.js?v=20261027-1"></script>
+  <script type="module" src="game.js?v=20261027-2"></script>
 </body>
 </html>

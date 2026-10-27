@@ -1,5 +1,6 @@
 import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js?v=20260820-6';
 import { NetPing } from './netping.js';
+import { probeRegions, pingUrl, regionLabel } from './netprobe.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -12,7 +13,7 @@ const ITEM_BY_ID = new Map(ITEM_CATALOG.map(item => [item.id, item]));
 const itemCost = item => Object.entries(item?.cost || {}).filter(([,value])=>value).map(([key,value])=>`${value}${key[0].toUpperCase()}`).join(' ');
 
 const game = {
-  mode:null, ws:null, pinger:null, room:'', id:null, host:false, running:false, paused:false, dead:false,
+  mode:null, ws:null, pinger:null, room:'', password:'', shard:'', probes:null, roomPings:new Map(), id:null, host:false, running:false, paused:false, dead:false,
   world:null, input:{ x:0, y:0, angle:0, rotation:0, attack:false, interact:false, selected:0 },
   keys:new Set(), pointer:{ x:0, y:0, down:false }, camera:{ x:0, y:0 },
   last:performance.now(), sendAt:0, pingAt:0, localTick:0, feed:[], selected:0, selectedPet:0,
@@ -51,7 +52,7 @@ function relayBase() {
 
 $('how-button').onclick = () => $('how').classList.remove('hidden');
 $('close-how').onclick = () => $('how').classList.add('hidden');
-$('open-online').onclick = () => { show('online'); refreshLobbies(); };
+$('open-online').onclick = () => { show('online'); refreshLobbies(); probeRegions().then(ms => { game.probes = ms; sendRegions(); }); };
 document.querySelectorAll('[data-back="landing"]').forEach(button => button.onclick = () => show('landing'));
 $('refresh').onclick = refreshLobbies;
 $('play-cpu').onclick = () => startLocal(playerName());
@@ -72,11 +73,24 @@ function renderLobbies(lobbies) {
     const info = document.createElement('div');
     const title = document.createElement('h4'); title.textContent = room.name;
     const meta = document.createElement('p'); meta.textContent = `${room.players}/${room.max} tamers · ${room.locked ? 'locked' : 'open'} · ${room.biome || 'forest'}`;
+    const where = document.createElement('span'); where.className = 'lobby-where'; meta.append(where);
+    roomPing(room.name).then(label => { if (label) where.textContent = ` · ${label}`; });
     info.append(title, meta);
     const join = document.createElement('button'); join.className = 'secondary'; join.textContent = 'JOIN';
     join.onclick = () => { $('join-name').value = room.name; connect('join', room.name, $('join-password').value); };
     row.append(info, join); list.append(row);
   }
+}
+// The room's region and this player's ms to it ("Asia · 120 ms") from the relay's /ping, timed at most every 30 s per room.
+function roomPing(name, shard = '') {
+  const key = `${name.toLowerCase()}~${shard}`, url = `${relayBase()}/ping?room=${encodeURIComponent(name)}${shard ? `&shard=${encodeURIComponent(shard)}` : ''}`;
+  let entry = game.roomPings.get(key);
+  if (!entry || performance.now() - entry.at > 30000) {
+    const region = entry?.region || fetch(url, { cache:'no-store' }).then(response => response.json()).then(body => body.region || '').catch(() => '');
+    entry = { at:performance.now(), region, label:Promise.all([region, pingUrl(url)]).then(([where, ms]) => where ? regionLabel(where, ms) : '') };
+    game.roomPings.set(key, entry);
+  }
+  return entry.label;
 }
 function escapeHtml(value) { const div = document.createElement('div'); div.textContent = value; return div.innerHTML; }
 
@@ -86,30 +100,42 @@ $('create-form').onsubmit = event => {
 };
 $('join-form').onsubmit = event => { event.preventDefault(); connect('join', $('join-name').value, $('join-password').value); };
 
-function connect(action, roomName, password = '', settings = {}) {
+// `moved` is the relay's { shard, ticket } when the room moved to a fairer region at start (the ticket keeps this seat).
+function connect(action, roomName, password = '', settings = {}, moved = null) {
   const room = roomName.trim().replace(/[^a-z0-9 _-]/gi, '').replace(/\s+/g, ' ').slice(0, 24);
   if (room.length < 3) { $('online-error').textContent = 'Lobby names need at least 3 characters.'; return; }
   $('online-error').textContent = 'Connecting...';
   const url = new URL(`${relayBase().replace(/^http/, 'ws')}/ws`); url.searchParams.set('room', room);
+  if (moved?.shard) url.searchParams.set('shard', moved.shard);
+  if (moved?.ticket) url.searchParams.set('ticket', moved.ticket);
   const ws = new WebSocket(url), pinger = new NetPing();
   const timer = setTimeout(() => ws.close(), 10000);
   ws.onopen = () => ws.send(JSON.stringify({ t:action, room, password, name:playerName(), settings }));
-  ws.onmessage = event => { const message = JSON.parse(event.data); if (message.t === 'welcome') clearTimeout(timer); handleMessage(message); };
+  ws.onmessage = event => { if (game.ws !== ws) return; const message = JSON.parse(event.data); if (message.t === 'welcome') clearTimeout(timer); handleMessage(message); };
   ws.onerror = () => $('online-error').textContent = 'Could not reach the multiplayer relay.';
   ws.onclose = () => {
     clearTimeout(timer);
     pinger.stop(); if (game.pinger === pinger) game.pinger = null;
     if (game.ws === ws && game.running) leaveGame('Connection to the range was lost.');
-    else if (!game.id) $('online-error').textContent = 'The lobby connection closed.';
+    else if (game.ws === ws && moved && game.id) leaveGame('The range could not be moved. Connection lost.');
+    else if (!game.id && game.ws === ws) $('online-error').textContent = 'The lobby connection closed.';
   };
-  game.ws = ws; game.pinger = pinger; game.mode = 'online'; game.room = room;
+  game.ws = ws; game.pinger = pinger; game.mode = 'online'; game.room = room; game.password = password; game.shard = moved?.shard || '';
 }
+// The relay moved this room to a fairer region at match start: reconnect there, keeping the lobby on screen.
+function moveRoom(message) {
+  const text = `Moving room to ${regionLabel(message.region) || 'a fairer region'}…`;
+  toast(text); $('lobby-wait').textContent = text; $('online-error').textContent = text;
+  connect('join', game.room, game.password, {}, { shard:message.shard, ticket:message.ticket });
+}
+function sendRegions() { if (game.probes && game.id) send({ t:'regions', ms:game.probes }); }
 
 function send(message) { if (game.ws?.readyState === WebSocket.OPEN) game.ws.send(JSON.stringify(message)); }
 function handleMessage(message) {
   if (message.t === 'error') { $('online-error').textContent = message.message; $('lobby-wait').textContent = message.message; return; }
   if (message.t === 'pong') { game.pinger?.pong(message.c); return; }
-  if (message.t === 'welcome') { game.id = message.id; game.host = message.host; $('online-error').textContent = ''; return; }
+  if (message.t === 'welcome') { game.id = message.id; game.host = message.host; $('online-error').textContent = ''; sendRegions(); return; }
+  if (message.t === 'move') { moveRoom(message); return; }
   if (message.t === 'lobby') { renderLobby(message); return; }
   if (message.t === 'start') { game.id = message.you || game.id; beginWorld(message.world); return; }
   if (message.t === 'snapshot') { game.world = message.world;game.snapshotAt=performance.now();if (game.world.players[game.id]?.dead) showDeath(); updateHud(); return; }
@@ -127,6 +153,8 @@ function renderLobby(message) {
     row.append(dot, name, role); roster.append(row);
   }
   $('lobby-cpu').textContent = `${message.settings.bots} roaming tamers will join`;
+  const room = game.room, shard = game.shard;
+  roomPing(room, shard).then(label => { if (game.room === room && game.shard === shard) $('lobby-region').textContent = label ? `Region · ${label}` : ''; });
   $('start-match').classList.toggle('hidden', !game.host); $('lobby-wait').classList.toggle('hidden', game.host);
 }
 $('start-match').onclick = () => send({ t:'start' });
@@ -181,6 +209,7 @@ function updateHud() {
   $('pet-controls').innerHTML=pets.map((pet,index)=>`<div class="pet-chip ${index===game.selectedPet?'active':''}"><b>${index+1} ${(PET_BY_ID.get(pet.species)?.name||pet.species).split(' ')[0]}</b><small>${index+4} ${PET_BY_ID.get(pet.species)?.skill||'skill'}</small></div>`).join('');
   const seasonTiming=getSeasonTiming(currentWorldTime()),season=SEASONS[seasonTiming.index],previous=SEASONS[seasonTiming.previous],seasonName=seasonTiming.blend<1?`${previous.name} → ${season.name}`:season.name;$('minimap').textContent=`${seasonName.toUpperCase()} · ${formatTime(seasonTiming.remaining)}`;
   [...$('hotbar').children].forEach((slot,i)=>slot.style.opacity=me.unlocks?.includes(me.loadout[i])?'1':'.42');
+  const rtt=game.mode==='online'&&game.pinger?game.pinger.rtt:-1,ping=$('ping');ping.classList.toggle('hidden',rtt<0);if(rtt>=0){ping.textContent=`${Math.round(rtt)} ms`;ping.dataset.level=rtt>=200?'bad':rtt>=120?'warn':''}
   $('auto-flag').textContent=`E AUTO: ${game.autoAttack?'ON':'OFF'}`;$('lock-flag').textContent=`L AIM: ${game.aimLocked?'LOCKED':'FREE'}`;
   if(me.choiceAge!==null&&me.choiceAge!==undefined&&$('age-choice').classList.contains('hidden'))openAgeChoice(me.choiceAge);
 }
@@ -315,8 +344,9 @@ function leaveGame(message='') { if(game.ws){game.ws.close();game.ws=null;} game
 
 function sendInput(now){if(game.mode!=='online'||now-game.sendAt<50)return;game.sendAt=now;send({t:'input',...game.input});game.input.interact=false;}
 // Once a second while playing online: this client's ping and frame rate, for the relay's lag log.
-function sendPing(now){if(game.mode!=='online'||!game.pinger||now-game.pingAt<1000)return;game.pingAt=now;send({t:'ping',...game.pinger.next()});}
-function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if(game.running&&game.world){updateInput();if(game.mode==='local'&&!game.paused)simulateLocal(dt);sendInput(now);sendPing(now);drawWorld();updateHud();}else drawBackdrop(now);requestAnimationFrame(frame);}requestAnimationFrame(frame);
+// Also in the lobby, so the relay knows each player's ping when it decides where the expedition runs.
+function sendPing(now){if(game.mode!=='online'||!game.pinger||!game.id||now-game.pingAt<1000)return;game.pingAt=now;send({t:'ping',...game.pinger.next()});}
+function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if(game.running&&game.world){updateInput();if(game.mode==='local'&&!game.paused)simulateLocal(dt);sendInput(now);drawWorld();updateHud();}else drawBackdrop(now);sendPing(now);requestAnimationFrame(frame);}requestAnimationFrame(frame);
 
 function drawBackdrop(now){ctx.setTransform(devicePixelRatio>2?2:devicePixelRatio||1,0,0,devicePixelRatio>2?2:devicePixelRatio||1,0,0);ctx.fillStyle='#afc77e';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.globalAlpha=.22;for(let i=0;i<20;i++){const x=(i*271+now*.004*(i%3))%innerWidth,y=(i*173)%innerHeight;drawLeaf(x,y,18+(i%4)*5,i*.7);}ctx.globalAlpha=1;}
 function drawWorld(){
