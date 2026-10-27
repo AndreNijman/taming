@@ -1,9 +1,10 @@
 import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js';
 import { NetStats, sendNetLog, coloOf } from './netstats.js';
-import { playerWhere, withWhere, whereOf, regionOfColo } from './netplace.js';
+import { REGIONS, playerWhere, withWhere, whereOf, chooseRegion, newShard, shardRegion, roomStub, regionOfColo } from './netplace.js';
 
 const WORLD_W = 3200, WORLD_H = 2400;
 const TICK_MS = 50, SNAPSHOT_MS = 100, ROOM_TTL = 45 * 60_000;
+const ADOPT_WAIT_MS = 6000, MOVE_CLOSE_MS = 1000; // a moved room waits this long for its players; the old one closes their sockets after this
 const COLORS = ['#f0c95d','#79a966','#d96f59','#6fa8a4','#977ab2','#d99555','#7b93c5','#b66c85','#8f9e55','#c7794f','#648a91','#bc8b55','#7d77a0','#75a16f','#c06b6b','#8e9365'];
 const BOT_NAMES = ['Fern','Kestrel','Mochi','Bramble','Juniper','Pip','Rowan','Clover','Wren','Taro','Mallow','Ash'];
 const ITEM_BY_ID = new Map(ITEM_CATALOG.map(item => [item.id, item]));
@@ -24,6 +25,10 @@ function structureBlocksPlayer(structure,player,x,y){
 }
 function json(data, status = 200) { return Response.json(data, { status, headers:{ 'Access-Control-Allow-Origin':'*', 'Cache-Control':'no-store' } }); }
 async function hash(value) { const bytes = await crypto.subtle.digest('SHA-256', encoder.encode(String(value || '').slice(0, 40))); return [...new Uint8Array(bytes)].map(v=>v.toString(16).padStart(2,'0')).join(''); }
+// A client's netprobe.js results ({ weur: 38, apac: 290 }), known regions only, or null.
+function cleanProbes(ms) { if (!ms || typeof ms !== 'object') return null; const out = {}; for (const region of REGIONS) { const value = Number(ms[region]); if (value > 0 && value < 10000) out[region] = Math.round(value); } return Object.keys(out).length ? out : null; }
+const median = values => values.length ? [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] : null;
+function newTicket() { return [...crypto.getRandomValues(new Uint8Array(16))].map(b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join(''); }
 function rng(seed) { return () => ((seed = Math.imul(seed ^ seed >>> 15, 1 | seed), seed ^= seed + Math.imul(seed ^ seed >>> 7, 61 | seed)), ((seed ^ seed >>> 14) >>> 0) / 4294967296); }
 
 export default {
@@ -32,12 +37,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { headers:{ 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET,OPTIONS', 'Access-Control-Allow-Headers':'Content-Type' } });
     if (url.pathname === '/health') return json({ ok:true });
     if (url.pathname === '/lobbies') return env.REGISTRY.getByName('global').fetch(new Request('https://registry/list'));
-    // Only a room's socket and its /ping are forwarded to the room.
+    // Only a room's socket and its /ping are forwarded; the rooms' internal routes (/_adopt, /_released) never are.
     if (url.pathname !== '/ping' && (url.pathname !== '/ws' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')) return new Response('Wildbound relay', { status:404 });
-    const key = roomKey(url.searchParams.get('room'));
+    const key = roomKey(url.searchParams.get('room')), shard = url.searchParams.get('shard') || '';
     if (key.length < 3) return new Response('invalid lobby name', { status:400 });
-    // Where the player connects from rides along for the lag log (request.cf is only reliable here).
-    return env.ROOMS.getByName(key).fetch(withWhere(request, playerWhere(request)));
+    if (shard && !shardRegion(shard)) return new Response('invalid shard', { status:400 });
+    // A moved room lives on a shard (netplace.js); where the player connects from rides along for the lag log.
+    return roomStub(env.ROOMS, key, shard).fetch(withWhere(request, playerWhere(request)));
   }
 };
 
@@ -79,13 +85,20 @@ export class GameRoom {
   constructor(ctx, env) {
     this.ctx=ctx;this.env=env;this.sessions=new Map();this.players=new Map();this.room='';this.key='';this.host=null;this.settings={max:8,bots:4};this.password='';this.started=false;this.world=null;this.nextId=1;this.timer=null;this.lastTick=0;this.lastSnapshot=0;this.touched=Date.now();
     this.net=null;this.netLoopAt=0;this.netBots=0;this.colo='';this.coloP=null; // lag stats for the expedition in progress
+    // Placement (netplace.js): moved is the shard this room moved to (persisted; undefined until loaded), moving the move in flight;
+    // a shard knows its shard, the colo it came from, and the tickets of the players still to reconnect.
+    this.moved=undefined;this.moving=null;this.adopted=false;this.shard='';this.movedFrom='';this.tickets=null;this.adoptTimer=null;
   }
   async fetch(request){
     const url=new URL(request.url);
     if(url.pathname==='/ping'){const colo=await this.whereColo();return json({colo,region:regionOfColo(colo)})}
+    if(url.pathname==='/_adopt'&&request.method==='POST')return this.adopt(await request.json());
+    if(url.pathname==='/_alive')return json({alive:!!(this.room||this.players.size||this.tickets)});
+    if(url.pathname==='/_released'&&request.method==='POST'){const {shard}=await request.json();await this.loadMoved();if(this.moved&&this.moved===shard)await this.clearMoved();return new Response(null,{status:204})}
     if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('upgrade required',{status:426});
+    await this.loadMoved();
     const pair=new WebSocketPair(),client=pair[0],server=pair[1];server.accept();
-    const session={socket:server,id:null,ready:false,where:whereOf(request)};this.sessions.set(server,session);this.touched=Date.now();
+    const session={socket:server,id:null,ready:false,where:whereOf(request),ticket:url.searchParams.get('ticket')||'',regions:null,rtts:[]};this.sessions.set(server,session);this.touched=Date.now();
     const timeout=setTimeout(()=>{if(!session.ready)server.close(1008,'handshake timeout')},10_000);
     server.addEventListener('message',event=>this.onMessage(session,event.data).catch(error=>{console.error(error);this.send(server,{t:'error',message:'Relay error'});}));
     server.addEventListener('close',()=>{clearTimeout(timeout);this.remove(session)});server.addEventListener('error',()=>this.remove(session));
@@ -97,9 +110,10 @@ export class GameRoom {
 
   async onMessage(session,raw){
     if(typeof raw!=='string'||raw.length>8192)return;let message;try{message=JSON.parse(raw)}catch{return}this.touched=Date.now();
-    if(!session.ready){await this.join(session,message);return}const player=this.players.get(session.id);if(!player)return;
-    if(message.t==='start'){if(session.id===this.host&&!this.started)this.start();return}
-    if(message.t==='ping'){this.net?.ping(session.id,message.rtt,message.fps,message.frameMax);this.send(session.socket,{t:'pong',c:message.c});return}
+    if(!session.ready){await this.join(session,message);return}if(this.moved)return;const player=this.players.get(session.id);if(!player)return;
+    if(message.t==='start'){if(session.id===this.host&&!this.started&&!this.tickets)await this.startOrMove();return}
+    if(message.t==='regions'){session.regions=cleanProbes(message.ms);return}
+    if(message.t==='ping'){if(typeof message.rtt==='number'&&message.rtt>=0&&message.rtt<60000){const rtts=session.rtts??=[];rtts.push(message.rtt);if(rtts.length>5)rtts.shift()}this.net?.ping(session.id,message.rtt,message.fps,message.frameMax);this.send(session.socket,{t:'pong',c:message.c});return}
     if(message.t==='input'&&this.started){this.net?.message(session.id);player.input={x:clamp(Number(message.x)||0,-1,1),y:clamp(Number(message.y)||0,-1,1),angle:Number.isFinite(message.angle)?message.angle:player.angle,rotation:Number.isFinite(message.rotation)?message.rotation:player.angle+Math.PI/2,attack:!!message.attack,interact:!!message.interact,selected:clamp(Math.floor(Number(message.selected)||0),0,player.loadout.length-1)};return}
     if(message.t==='eat'&&this.started&&!player.dead&&player.hp<player.maxHp){const food=ITEM_BY_ID.get(player.loadout.find(id=>ITEM_BY_ID.get(id)?.slot==='food')),cost=food?.stats.foodUse||5;if(player.resources.food>=cost){player.resources.food-=cost;player.hp=Math.min(player.maxHp,player.hp+(food?.stats.healing||10))}return}
     if(message.t==='choose'&&this.started&&player.choiceAge!==null){const item=ITEM_BY_ID.get(String(message.id||'')),choices=this.getAgeChoiceIds(player,player.choiceAge);if(item&&choices.includes(item.id))this.applyChoice(player,item);return}
@@ -109,6 +123,9 @@ export class GameRoom {
   }
   async join(session,message){
     if(!['create','join'].includes(message.t)){this.send(session.socket,{t:'error',message:'Create or join first'});session.socket.close(1008);return}
+    if(this.moving)await this.moving;if(this.moved&&!await this.shardAlive(roomKey(message.room)))await this.clearMoved();if(this.moved){this.redirect(session);return}
+    const seat=session.ticket&&this.tickets?.get(session.ticket);
+    if(seat){this.tickets.delete(session.ticket);this.seatPlayer(session,seat.id,seat.name,seat.color);if(!this.tickets.size)this.startAdopted();return}
     const requested=cleanName(message.room,'',24),key=roomKey(requested);if(key.length<3){this.reject(session,'Invalid lobby name');return}
     if(message.t==='create'){
       if(this.room||this.players.size){this.reject(session,'A lobby with that name already exists');return}
@@ -119,19 +136,51 @@ export class GameRoom {
       if(this.players.size>=this.settings.max){this.reject(session,'That lobby is full');return}
       if(this.password!==await hash(message.password||'')){this.reject(session,'Wrong lobby password');return}
     }
-    const id=`p${this.nextId++}`,player=newPlayer(id,cleanName(message.name),0,0,COLORS[(this.nextId-2)%COLORS.length]);this.players.set(id,player);session.id=id;session.ready=true;if(!this.host)this.host=id;
-    this.send(session.socket,{t:'welcome',id,host:id===this.host});this.sendLobby();await this.syncRegistry();
+    const id=`p${this.nextId++}`;this.seatPlayer(session,id,cleanName(message.name),COLORS[(this.nextId-2)%COLORS.length]);await this.syncRegistry();
   }
+  seatPlayer(session,id,name,color){const player=newPlayer(id,name,0,0,color);this.players.set(id,player);session.id=id;session.ready=true;if(!this.host)this.host=id;this.send(session.socket,{t:'welcome',id,host:id===this.host});this.sendLobby()}
   reject(session,message){this.send(session.socket,{t:'error',message});setTimeout(()=>session.socket.close(1008,message),20)}
   remove(session){
-    this.sessions.delete(session.socket);if(!session.id)return;const wasHost=session.id===this.host;this.players.delete(session.id);if(this.world)delete this.world.players[session.id];
-    if(!this.players.size){this.reset();return}if(wasHost)this.host=this.players.keys().next().value;this.sendLobby();this.syncRegistry();
+    this.sessions.delete(session.socket);if(!session.id){if(!this.sessions.size&&!this.players.size&&!this.tickets)this.stopTimer();return}const wasHost=session.id===this.host;this.players.delete(session.id);if(this.world)delete this.world.players[session.id];
+    if(!this.players.size){this.reset();return}if(this.moved)return;if(wasHost)this.host=this.players.keys().next().value;this.sendLobby();this.syncRegistry();
   }
-  reset(){this.endNetLog('closed');this.removeRegistry();this.room='';this.key='';this.host=null;this.players.clear();this.started=false;this.world=null;this.password='';if(this.timer){clearInterval(this.timer);this.timer=null}}
+  reset(){this.endNetLog('closed');this.removeRegistry();this.release();this.room='';this.key='';this.host=null;this.players.clear();this.started=false;this.world=null;this.password='';this.tickets=null;clearTimeout(this.adoptTimer);this.stopTimer()}
+  stopTimer(){if(this.timer){clearInterval(this.timer);this.timer=null}}
   sendLobby(){this.broadcast({t:'lobby',name:this.room,host:this.host,settings:this.settings,players:[...this.players.values()].map(p=>({id:p.id,name:p.name,color:p.color}))});}
-  async syncRegistry(){if(!this.key)return;const lobby={name:this.room,key:this.key,players:this.players.size,max:this.settings.max,locked:!!this.password,started:this.started,biome:this.world?.biome||'Forest',updated:Date.now()};await this.env.REGISTRY.getByName('global').fetch(new Request('https://registry/upsert',{method:'POST',body:JSON.stringify({key:this.key,lobby})}));}
+  async syncRegistry(){if(!this.key||this.moved||this.tickets)return;const lobby={name:this.room,key:this.key,players:this.players.size,max:this.settings.max,locked:!!this.password,started:this.started,biome:this.world?.biome||'Forest',updated:Date.now()};await this.env.REGISTRY.getByName('global').fetch(new Request('https://registry/upsert',{method:'POST',body:JSON.stringify({key:this.key,lobby})}));}
   async removeRegistry(){if(!this.key)return;await this.env.REGISTRY.getByName('global').fetch(new Request('https://registry/remove',{method:'POST',body:JSON.stringify({key:this.key})}));}
 
+  // Placement, at match start: a mixed group whose worst ping would clearly improve elsewhere
+  // (chooseRegion) moves first to a fresh Durable Object in that region, once; otherwise, or if
+  // the move fails, the expedition starts here as before.
+  async startOrMove(){
+    if(this.moving)return;const sessions=[...this.sessions.values()].filter(s=>s.ready&&this.players.has(s.id));
+    const choice=!this.adopted&&sessions.length>=2?chooseRegion(sessions.map(s=>({probes:s.regions,rtt:median(s.rtts||[])}))):null;
+    if(choice){this.moving=this.move(choice.region,sessions);await this.moving;this.moving=null}
+    if(!this.moved)this.start();
+  }
+  async move(region,sessions){
+    const shard=newShard(region),tickets={},state={room:this.room,settings:this.settings,password:this.password,host:this.host,nextId:this.nextId},ticketOf=new Map();
+    for(const session of sessions){const ticket=newTicket(),player=this.players.get(session.id);tickets[ticket]={id:player.id,name:player.name,color:player.color};ticketOf.set(session,ticket)}
+    try{const response=await roomStub(this.env.ROOMS,this.key,shard).fetch(new Request('https://room/_adopt',{method:'POST',body:JSON.stringify({code:this.key,shard,from:await this.whereColo(),state,tickets})}));if(!response.ok)throw new Error(`adopt answered ${response.status}`)}
+    catch(error){console.error('room move failed, starting here',error);return}
+    this.moved=shard;this.ctx.storage?.put('moved',shard);this.removeRegistry();for(const [session,ticket] of ticketOf)this.redirect(session,ticket);
+  }
+  // Send a socket on to the shard (a ticket keeps its seat; without one it joins as anyone would), then close it.
+  redirect(session,ticket){this.send(session.socket,{t:'move',shard:this.moved,region:shardRegion(this.moved),...(ticket?{ticket}:{})});setTimeout(()=>session.socket.close(4000,'moved'),MOVE_CLOSE_MS)}
+  // On the shard: the old room's state and a ticket per player. Starts when every ticket is back, or after ADOPT_WAIT_MS with whoever made it.
+  adopt({code,shard,from,state,tickets}){
+    if(this.room||this.players.size||!state||!shardRegion(shard))return new Response('room busy',{status:409});
+    this.adopted=true;this.key=code;this.shard=shard;this.movedFrom=String(from||'');this.room=state.room;this.settings=state.settings;this.password=state.password;this.host=state.host;this.nextId=state.nextId;
+    this.tickets=new Map(Object.entries(tickets||{}));this.touched=Date.now();this.adoptTimer=setTimeout(()=>this.startAdopted(),ADOPT_WAIT_MS);this.whereColo();return new Response(null,{status:204});
+  }
+  startAdopted(){clearTimeout(this.adoptTimer);this.adoptTimer=null;if(!this.tickets)return;this.tickets=null;if(!this.players.size){this.reset();return}if(!this.players.has(this.host))this.host=this.players.keys().next().value;this.start()}
+  // When a shard empties, its room's name is free again at the original Durable Object.
+  release(){if(!this.shard)return;const shard=this.shard;this.shard='';this.movedFrom='';const done=roomStub(this.env.ROOMS,this.key).fetch(new Request('https://room/_released',{method:'POST',body:JSON.stringify({shard})})).catch(error=>console.error('room release failed',error));this.ctx.waitUntil?.(done)}
+  // A shard that lost its room without releasing the name (a restart mid-expedition) must not hold it forever.
+  async shardAlive(code){try{const response=await roomStub(this.env.ROOMS,code,this.moved).fetch(new Request('https://room/_alive'));return !response.ok||(await response.json()).alive}catch{return true}}
+  async clearMoved(){this.moved=null;await this.ctx.storage?.delete('moved')}
+  async loadMoved(){if(this.moved===undefined)this.moved=(await this.ctx.storage?.get('moved'))||null}
   whereColo(){return this.coloP??=this.colo?Promise.resolve(this.colo):coloOf().then(colo=>{this.colo=colo;if(!colo)this.coloP=null;return colo})}
   sessionOf(id){for(const session of this.sessions.values())if(session.id===id)return session;return null}
 
@@ -144,7 +193,7 @@ export class GameRoom {
   // One lag record per expedition, from the host's start until the room empties
   // (no one can join a started expedition), sent to games-guard's NetLog.
   startNetLog(){this.endNetLog('abandoned');this.net=new NetStats();this.netLoopAt=0;for(const player of this.players.values())this.net.seat(player.id,player.name,this.sessionOf(player.id)?.where);this.netBots=Object.values(this.world.players).filter(p=>p.bot).length;this.whereColo()}
-  endNetLog(outcome){const net=this.net;this.net=null;if(!net)return;const record=net.record({code:this.room,mode:`${net.seats.size}p + ${this.netBots} bots · survival`,outcome,colo:this.colo,region:regionOfColo(this.colo),moved:null});if(record.runTime<10)return;sendNetLog(this.env,this.ctx,'wildbound',record)}
+  endNetLog(outcome){const net=this.net;this.net=null;if(!net)return;const record=net.record({code:this.room,mode:`${net.seats.size}p + ${this.netBots} bots · survival`,outcome,colo:this.colo,region:shardRegion(this.shard)||regionOfColo(this.colo),moved:this.shard?{from:this.movedFrom,to:shardRegion(this.shard)}:null});if(record.runTime<10)return;sendNetLog(this.env,this.ctx,'wildbound',record)}
   ensureTimer(){if(this.timer)return;this.timer=setInterval(()=>this.tick(),TICK_MS)}
   tick(){
     const now=Date.now();if(now-this.touched>ROOM_TTL){for(const session of this.sessions.values())session.socket.close(1000,'lobby idle');this.reset();return}if(!this.started||!this.world){return}
