@@ -1,0 +1,6 @@
+// Run beside the relay: wrangler dev -c wrangler.jsonc -c tests/latency/netlog-stub.jsonc
+{
+  "name": "games-guard",
+  "main": "netlog-stub.js",
+  "compatibility_date": "2026-08-20"
+}
