@@ -133,13 +133,13 @@ export class GameRoom {
     const dev=await verifyDevPass(message.dev,DEV_HOST,{publicKey:this.env.DEV_TEST_PUBLIC_KEY||undefined});
     if(message.t==='create'){
       if(this.room||this.players.size){this.reject(session,'A lobby with that name already exists');return}
-      this.room=requested;this.key=key;this.settings={max:clamp(Math.round(message.settings?.max||8),2,16),bots:clamp(Math.round(message.settings?.bots||0),0,8)};this.settings.bots=Math.min(this.settings.bots,this.settings.max-1);this.password=await hash(message.password||'');
+      this.room=requested;this.key=key;this.settings={max:clamp(Math.round(message.settings?.max||8),2,16),bots:clamp(Math.round(message.settings?.bots||0),0,8)};this.settings.bots=Math.min(this.settings.bots,this.settings.max-1);this.password=message.password?await hash(message.password):''; // no password: an open lobby
     }else{
       if(!this.room){this.reject(session,'No open lobby has that name');return}
       if(!dev){
         if(this.started){this.reject(session,'That expedition has already started');return}
         if(this.players.size>=this.settings.max){this.reject(session,'That lobby is full');return}
-        if(this.password!==await hash(message.password||'')){this.reject(session,'Wrong lobby password');return}
+        if(this.password&&this.password!==await hash(message.password||'')){this.reject(session,'Wrong lobby password');return}
       }
     }
     const id=`p${this.nextId++}`,name=cleanName(message.name),color=COLORS[(this.nextId-2)%COLORS.length];
