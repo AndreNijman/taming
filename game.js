@@ -1,6 +1,7 @@
 import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js?v=20260820-6';
 import { NetPing } from './netping.js';
 import { probeRegions, pingUrl, regionLabel } from './netprobe.js';
+import { SnapshotBuffer, LocalPredictor } from './netsmooth.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -10,6 +11,8 @@ const WORLD_W = 3200, WORLD_H = 2400;
 const COLORS = ['#f0c95d','#79a966','#d96f59','#6fa8a4','#977ab2','#d99555','#7b93c5','#b66c85','#8f9e55','#c7794f'];
 const BOT_NAMES = ['Fern','Kestrel','Mochi','Bramble','Juniper','Pip','Rowan','Clover','Wren','Taro','Mallow','Ash'];
 const ITEM_BY_ID = new Map(ITEM_CATALOG.map(item => [item.id, item]));
+// Online, other entities are drawn from a snapshot buffer and your own tamer is predicted (netsmooth.js); ?smooth=0 draws raw snapshots as before.
+const SMOOTH = new URLSearchParams(location.search).get('smooth') !== '0';
 const itemCost = item => Object.entries(item?.cost || {}).filter(([,value])=>value).map(([key,value])=>`${value}${key[0].toUpperCase()}`).join(' ');
 
 const game = {
@@ -19,6 +22,7 @@ const game = {
   last:performance.now(), sendAt:0, pingAt:0, localTick:0, feed:[], selected:0, selectedPet:0,
   autoAttack:false, aimLocked:false, overlay:null, dexSeason:'forest', toastTimer:null,
   missingPlayerSince:0, buildRotationOffset:0, snapshotAt:performance.now(), renderSeason:null,
+  buffer:new SnapshotBuffer(), predictor:new LocalPredictor(), renderTime:0, localAction:null, localCooldown:0,
 };
 
 function resize() {
@@ -138,7 +142,7 @@ function handleMessage(message) {
   if (message.t === 'move') { moveRoom(message); return; }
   if (message.t === 'lobby') { renderLobby(message); return; }
   if (message.t === 'start') { game.id = message.you || game.id; beginWorld(message.world); return; }
-  if (message.t === 'snapshot') { game.world = message.world;game.snapshotAt=performance.now();if (game.world.players[game.id]?.dead) showDeath(); updateHud(); return; }
+  if (message.t === 'snapshot') { game.world = message.world;game.snapshotAt=performance.now();trackSnapshot(game.world,game.snapshotAt);if (game.world.players[game.id]?.dead) showDeath(); updateHud(); return; }
   if (message.t === 'event') { addFeed(message.message); if (message.self) toast(message.message); return; }
   if (message.t === 'chat') addChat(message.name, message.message);
 }
@@ -182,7 +186,7 @@ function startLocal(name) {
   beginWorld(world);
 }
 function beginWorld(world) {
-  game.world=world;resolveLocalPlayer();game.running=true; game.paused=false; game.dead=false; game.last=performance.now();game.snapshotAt=game.last;game.missingPlayerSince=0;
+  game.world=world;game.buffer.reset();game.predictor.reset();game.localAction=null;game.localCooldown=0;game.renderTime=world.time||0;if(game.mode==='online')trackSnapshot(world,performance.now());resolveLocalPlayer();game.running=true; game.paused=false; game.dead=false; game.last=performance.now();game.snapshotAt=game.last;game.missingPlayerSince=0;
   document.body.classList.add('playing'); $('hud').classList.remove('hidden'); $('pause').classList.add('hidden'); $('death').classList.add('hidden');
   renderHotbar(); updateHud(); toast('Gather. Age up. Tame the wild.');
 }
@@ -310,7 +314,7 @@ function updateInput() {
   game.input.x=(game.keys.has('d')||game.keys.has('arrowright')?1:0)-(game.keys.has('a')||game.keys.has('arrowleft')?1:0);
   game.input.y=(game.keys.has('s')||game.keys.has('arrowdown')?1:0)-(game.keys.has('w')||game.keys.has('arrowup')?1:0);
   game.input.attack=game.pointer.down||game.keys.has(' ')||game.autoAttack;
-  const me=game.world?.players?.[game.id];if(me&&!game.aimLocked){const screenX=innerWidth/2+(me.x-game.camera.x),screenY=innerHeight/2+(me.y-game.camera.y);game.input.angle=Math.atan2(game.pointer.y-screenY,game.pointer.x-screenX)}if(me)game.input.rotation=placementRotation(me);
+  const me=game.world?.players?.[game.id],at=predicting()&&game.predictor.pos||me;if(me&&!game.aimLocked){const screenX=innerWidth/2+(at.x-game.camera.x),screenY=innerHeight/2+(at.y-game.camera.y);game.input.angle=Math.atan2(game.pointer.y-screenY,game.pointer.x-screenX)}if(me)game.input.rotation=placementRotation(predicting()?{angle:game.input.angle}:me);
 }
 addEventListener('keydown',event=>{
   const key=event.key.toLowerCase(); if($('chat-input')===document.activeElement)return;
@@ -346,11 +350,37 @@ function sendInput(now){if(game.mode!=='online'||now-game.sendAt<50)return;game.
 // Once a second while playing online: this client's ping and frame rate, for the relay's lag log.
 // Also in the lobby, so the relay knows each player's ping when it decides where the expedition runs.
 function sendPing(now){if(game.mode!=='online'||!game.pinger||!game.id||now-game.pingAt<1000)return;game.pingAt=now;send({t:'ping',...game.pinger.next()});}
-function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if(game.running&&game.world){updateInput();if(game.mode==='local'&&!game.paused)simulateLocal(dt);sendInput(now);drawWorld();updateHud();}else drawBackdrop(now);sendPing(now);requestAnimationFrame(frame);}requestAnimationFrame(frame);
+function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if(game.running&&game.world){updateInput();if(game.mode==='local'&&!game.paused)simulateLocal(dt);if(predicting())predictLocal(now,dt);sendInput(now);drawWorld();updateHud();}else drawBackdrop(now);sendPing(now);requestAnimationFrame(frame);}requestAnimationFrame(frame);
 
+
+// Online smoothing (netsmooth.js). Snapshots feed the buffer and reconcile the predicted local tamer.
+function predicting(){return game.mode==='online'&&SMOOTH}
+function trackSnapshot(world,now){
+  if(!predicting())return;const entities={};for(const p of Object.values(world.players))entities[p.id]={x:p.x,y:p.y,angle:p.angle};for(const a of world.animals)entities[a.id]={x:a.x,y:a.y,angle:a.angle};game.buffer.push(world.time,entities,now);
+  const me=world.players[game.id];if(me)game.predictor.reconcile(me,now,game.pinger?.rtt>=0?game.pinger.rtt:150);
+}
+// Your own tamer moves this frame by the server's movement rule (applyInput) and walls; swings, shots and builds start their animation at once.
+function predictLocal(now,dt){
+  const me=game.world.players[game.id],input=game.input;if(!me)return;
+  game.predictor.step(now,dt,(pos,step)=>{if(me.dead||Math.abs(input.x)+Math.abs(input.y)<=.05)return;const direction=norm(input.x,input.y),probe={id:me.id,x:pos.x,y:pos.y},nextX=clamp(pos.x+direction.x*175*step,24,WORLD_W-24);if(!game.world.structures.some(structure=>structureBlocksPlayer(structure,probe,nextX,pos.y)))pos.x=nextX;const nextY=clamp(pos.y+direction.y*175*step,24,WORLD_H-24);if(!game.world.structures.some(structure=>structureBlocksPlayer(structure,probe,pos.x,nextY)))pos.y=nextY});
+  game.localCooldown=Math.max(0,game.localCooldown-dt);if(me.dead||!input.attack||game.localCooldown>0)return;
+  const item=ITEM_BY_ID.get(me.loadout?.[input.selected])||ITEM_BY_ID.get('hand');if(!me.unlocks?.includes(item.id)){game.localCooldown=.3;return}
+  const building=item.category==='building';game.localAction={at:now,item:item.id,kind:building?'build':item.category==='ranged'?'shoot':item.branch==='wrench'?'repair':'swing'};game.localCooldown=building?(canPay(me,item.cost||{})?.4:.3):(item.stats?.cooldown||.48);
+}
+// The world as drawn this frame: others where the buffer puts them, you where the predictor does.
+function viewWorld(){
+  const world=game.world;if(!predicting()){game.renderTime=world.time;return world}
+  const now=performance.now(),sample=game.buffer.sample(now),players={};game.renderTime=sample?sample.t:world.time;
+  for(const [id,player] of Object.entries(world.players)){if(id===game.id){players[id]=localView(player,now);continue}const at=sample?.get(id);players[id]=at?{...player,...at}:player}
+  return {...world,players,animals:world.animals.map(animal=>{const at=sample?.get(animal.id);return at?{...animal,...at}:animal})};
+}
+function localView(player,now){
+  const pos=game.predictor.pos;if(!pos)return player;const view={...player,x:pos.x,y:pos.y,angle:game.input.angle},action=game.localAction;
+  if(action){view.actionKind=action.kind;view.actionItem=action.item;view.actionAt=game.renderTime-(now-action.at)/1000}return view;
+}
 function drawBackdrop(now){ctx.setTransform(devicePixelRatio>2?2:devicePixelRatio||1,0,0,devicePixelRatio>2?2:devicePixelRatio||1,0,0);ctx.fillStyle='#afc77e';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.globalAlpha=.22;for(let i=0;i<20;i++){const x=(i*271+now*.004*(i%3))%innerWidth,y=(i*173)%innerHeight;drawLeaf(x,y,18+(i%4)*5,i*.7);}ctx.globalAlpha=1;}
 function drawWorld(){
-  const world=game.world,me=world.players[game.id]||resolveLocalPlayer();if(!me){canvas.dataset.renderError='missing-player';if(!game.missingPlayerSince)game.missingPlayerSince=performance.now();if(game.mode==='online'&&performance.now()-game.missingPlayerSince>1200)leaveGame('Your player left the range. Rejoin the lobby.');return}game.missingPlayerSince=0;delete canvas.dataset.renderError;canvas.dataset.entities=String(Object.keys(world.players).length+world.animals.length+world.resources.filter(node=>node.hp>0).length);canvas.dataset.structures=String(world.structures.length);canvas.dataset.action=me.actionKind||'';canvas.dataset.playerX=String(me.x);canvas.dataset.structureX=String(world.structures[0]?.x??'');canvas.dataset.structureRotation=String(world.structures[0]?.rotation??'');game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
+  const world=viewWorld(),me=world.players[game.id]||resolveLocalPlayer();if(!me){canvas.dataset.renderError='missing-player';if(!game.missingPlayerSince)game.missingPlayerSince=performance.now();if(game.mode==='online'&&performance.now()-game.missingPlayerSince>1200)leaveGame('Your player left the range. Rejoin the lobby.');return}game.missingPlayerSince=0;delete canvas.dataset.renderError;canvas.dataset.entities=String(Object.keys(world.players).length+world.animals.length+world.resources.filter(node=>node.hp>0).length);canvas.dataset.structures=String(world.structures.length);canvas.dataset.action=me.actionKind||'';canvas.dataset.playerX=String(me.x);canvas.dataset.structureX=String(world.structures[0]?.x??'');canvas.dataset.structureRotation=String(world.structures[0]?.rotation??'');game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
   const zoom=1,dpr=Math.min(devicePixelRatio||1,2),visualTime=currentWorldTime(),seasonView=blendedSeason(visualTime),season=seasonView.season;game.renderSeason=season;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=season.palette.ground[0];ctx.fillRect(0,0,innerWidth,innerHeight);
   ctx.save();ctx.translate(innerWidth/2-game.camera.x*zoom,innerHeight/2-game.camera.y*zoom);ctx.scale(zoom,zoom);drawGround(world,season);
   for(const node of world.resources)if(node.hp>0&&onScreen(node))drawResource(node,season);for(const structure of world.structures)if(onScreen(structure))drawStructure(structure);drawPlacementPreview(me);for(const animal of world.animals)if(animal.hp>0&&onScreen(animal))drawAnimal(animal);for(const player of Object.values(world.players))if(!player.dead&&onScreen(player))drawPlayer(player);ctx.restore();
@@ -368,7 +398,7 @@ function drawPlayer(player){
   ctx.save();ctx.translate(player.x,player.y);ctx.rotate(player.angle);ctx.fillStyle='rgba(38,51,34,.2)';ctx.beginPath();ctx.ellipse(-4,12,22,11,0,0,TAU);ctx.fill();ctx.fillStyle=player.color;ctx.strokeStyle='#263322';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,19,0,TAU);ctx.fill();ctx.stroke();ctx.fillStyle='#f1efcf';ctx.beginPath();ctx.arc(10,-6,5,0,TAU);ctx.fill();ctx.stroke();drawPlayerAction(player);ctx.restore();drawBarWorld(player.x,player.y-36,player.hp/player.maxHp,player.name,player.id===game.id?'#e9b949':'#f1efcf');
 }
 function drawPlayerAction(player){
-  const elapsed=game.world.time-(player.actionAt??-99),active=elapsed>=0&&elapsed<.34,item=ITEM_BY_ID.get(player.actionItem)||ITEM_BY_ID.get(player.loadout?.[player.selected])||ITEM_BY_ID.get('hand');let angle=0,recoil=0;
+  const elapsed=game.renderTime-(player.actionAt??-99),active=elapsed>=0&&elapsed<.34,item=ITEM_BY_ID.get(player.actionItem)||ITEM_BY_ID.get(player.loadout?.[player.selected])||ITEM_BY_ID.get('hand');let angle=0,recoil=0;
   if(active){const phase=elapsed/.34;if(player.actionKind==='shoot')recoil=Math.sin(phase*Math.PI)*9;else angle=-.95+Math.sin(phase*Math.PI)*1.65;}
   ctx.save();ctx.translate(13-recoil,4);ctx.rotate(angle);ctx.strokeStyle='#263322';ctx.lineWidth=5;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(18,0);ctx.stroke();
   ctx.translate(18,0);ctx.lineWidth=3;ctx.fillStyle=item?.category==='building'||item?.branch==='wrench'?'#e9b949':'#f1efcf';
@@ -384,9 +414,9 @@ function drawPlacementPreview(player){
 function drawAnimal(animal){
   ctx.save();ctx.translate(animal.x,animal.y);ctx.rotate(animal.angle);if(animal.boss){drawBossShape(ctx,animal);ctx.restore();drawBarWorld(animal.x,animal.y-62,animal.hp/animal.max,animal.species.replaceAll('-',' ').toUpperCase(),'#b84e43');return}
   const pet=PET_BY_ID.get(animal.species)||PETS[0];drawPetShape(ctx,0,0,pet,animal.level,animal.angle,animal.baby);if(animal.sleep){ctx.fillStyle='#263322';ctx.font='700 14px DM Mono';ctx.fillText('z',10,-24)}if(animal.owner){ctx.fillStyle=worldPlayerColor(animal.owner);ctx.beginPath();ctx.arc(-20,0,5,0,TAU);ctx.fill()}ctx.restore();
-  if(animal.hp<animal.max)drawBarWorld(animal.x,animal.y-38,animal.hp/animal.max,pet.name,animal.owner?'#e9b949':'#b84e43');if(game.world.time-(animal.hitAt??-99)<.24)drawHitEffect(animal.x,animal.y,animal.hitAt);
+  if(animal.hp<animal.max)drawBarWorld(animal.x,animal.y-38,animal.hp/animal.max,pet.name,animal.owner?'#e9b949':'#b84e43');if(game.renderTime-(animal.hitAt??-99)<.24)drawHitEffect(animal.x,animal.y,animal.hitAt);
 }
-function drawHitEffect(x,y,hitAt){const phase=clamp((game.world.time-hitAt)/.24,0,1);ctx.save();ctx.translate(x,y);ctx.rotate(phase);ctx.strokeStyle=`rgba(255,244,174,${1-phase})`;ctx.lineWidth=4;for(let i=0;i<6;i++){ctx.rotate(TAU/6);ctx.beginPath();ctx.moveTo(25+phase*5,0);ctx.lineTo(38+phase*12,0);ctx.stroke()}ctx.restore();}
+function drawHitEffect(x,y,hitAt){const phase=clamp((game.renderTime-hitAt)/.24,0,1);ctx.save();ctx.translate(x,y);ctx.rotate(phase);ctx.strokeStyle=`rgba(255,244,174,${1-phase})`;ctx.lineWidth=4;for(let i=0;i<6;i++){ctx.rotate(TAU/6);ctx.beginPath();ctx.moveTo(25+phase*5,0);ctx.lineTo(38+phase*12,0);ctx.stroke()}ctx.restore();}
 function drawPetShape(target,x,y,pet,level=0,angle=0,baby=false){
   target.save();target.translate(x,y);const scale=baby?.82:level===2?1.48:level===1?1.2:1;target.scale(scale,scale);target.lineWidth=3/scale;target.strokeStyle='#263322';target.fillStyle='rgba(38,51,34,.18)';target.beginPath();target.ellipse(-3,13,24,9,0,0,TAU);target.fill();
   const winged=/wing|bird|bat|moth|insect/.test(`${pet.shape} ${pet.type}`),shelled=/shell|turtle|beetle|crab/.test(`${pet.shape} ${pet.type}`),long=/serpentine|eel|slender/.test(`${pet.shape} ${pet.type}`),horned=/horn|antler|tusk/.test(pet.shape);
@@ -401,13 +431,13 @@ function drawPetShape(target,x,y,pet,level=0,angle=0,baby=false){
   target.fillStyle='#f7f1cf';target.beginPath();target.arc(21,-6,3.2,0,TAU);target.fill();target.fillStyle='#263322';target.beginPath();target.arc(22,-6,1.4,0,TAU);target.fill();
   if(level===2){target.strokeStyle=pet.accent;target.lineWidth=2/scale;target.beginPath();target.arc(0,0,28,0,TAU);target.stroke()}target.restore();
 }
-function drawBossShape(target,animal){const season=game.renderSeason||SEASONS[game.world?.season||0],pulse=1+Math.sin(game.world.time*2)*.04;target.scale(pulse,pulse);target.fillStyle=season.palette.background[0];target.strokeStyle='#263322';target.lineWidth=5;target.beginPath();for(let i=0;i<12;i++){const a=i/12*TAU,r=i%2?42:55;i?target.lineTo(Math.cos(a)*r,Math.sin(a)*r):target.moveTo(Math.cos(a)*r,Math.sin(a)*r)}target.closePath();target.fill();target.stroke();target.fillStyle=season.palette.detail[1];target.beginPath();target.arc(0,0,24,0,TAU);target.fill();target.stroke();target.fillStyle='#263322';target.beginPath();target.ellipse(8,-2,10,6,0,0,TAU);target.fill();target.fillStyle='#f7f1cf';target.beginPath();target.arc(11,-3,3,0,TAU);target.fill()}
+function drawBossShape(target,animal){const season=game.renderSeason||SEASONS[game.world?.season||0],pulse=1+Math.sin(game.renderTime*2)*.04;target.scale(pulse,pulse);target.fillStyle=season.palette.background[0];target.strokeStyle='#263322';target.lineWidth=5;target.beginPath();for(let i=0;i<12;i++){const a=i/12*TAU,r=i%2?42:55;i?target.lineTo(Math.cos(a)*r,Math.sin(a)*r):target.moveTo(Math.cos(a)*r,Math.sin(a)*r)}target.closePath();target.fill();target.stroke();target.fillStyle=season.palette.detail[1];target.beginPath();target.arc(0,0,24,0,TAU);target.fill();target.stroke();target.fillStyle='#263322';target.beginPath();target.ellipse(8,-2,10,6,0,0,TAU);target.fill();target.fillStyle='#f7f1cf';target.beginPath();target.arc(11,-3,3,0,TAU);target.fill()}
 function drawSeasonOverlay(season,time,strength=1){if(strength<=0)return;ctx.save();ctx.globalAlpha=.2*strength;if(season.id==='winter'){ctx.fillStyle='#fff';for(let i=0;i<45;i++){const x=(i*97+time*18)%innerWidth,y=(i*53+time*25)%innerHeight;ctx.fillRect(x,y,3,3)}}else if(season.id==='darkness'){ctx.fillStyle='#151329';ctx.globalAlpha=.27*strength;ctx.fillRect(0,0,innerWidth,innerHeight)}else if(season.id==='ocean'){ctx.strokeStyle='#d7f3e6';for(let y=30;y<innerHeight;y+=70){ctx.beginPath();for(let x=0;x<innerWidth;x+=20)ctx.lineTo(x,y+Math.sin(x*.03+time)*5);ctx.stroke()}}else if(season.id==='volcano'){ctx.fillStyle='#ff9a43';for(let i=0;i<25;i++){const x=(i*131+time*8)%innerWidth,y=(i*79-time*20+innerHeight*3)%innerHeight;ctx.fillRect(x,y,3,5)}}else if(season.id==='desert'){ctx.fillStyle='#f5df9c';for(let i=0;i<30;i++)ctx.fillRect((i*113+time*30)%innerWidth,(i*67)%innerHeight,12,2)}ctx.restore()}
 function worldPlayerColor(id){return game.world.players[id]?.color||'#fff'}
 function drawStructure(s){ctx.save();ctx.translate(s.x,s.y);ctx.rotate(s.rotation||0);ctx.strokeStyle='#263322';ctx.lineWidth=3;
   if(s.type==='wall'||s.type==='door'){ctx.fillStyle=s.type==='door'?'#b17b43':'#8b623a';ctx.fillRect(-33,-13,66,26);ctx.strokeRect(-33,-13,66,26);for(let x=-24;x<30;x+=16){ctx.beginPath();ctx.moveTo(x,-12);ctx.lineTo(x,12);ctx.stroke()}if(s.type==='door'){ctx.fillStyle='#e9b949';ctx.beginPath();ctx.arc(22,0,3,0,TAU);ctx.fill()}}
   else if(s.type==='spike'){ctx.fillStyle='#4e6737';for(let i=0;i<8;i++){ctx.rotate(TAU/8);ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(7,-8);ctx.lineTo(30,0);ctx.lineTo(7,8);ctx.closePath();ctx.fill();ctx.stroke()}}
-  else if(s.type==='windmill'){ctx.fillStyle='#8b623a';ctx.fillRect(-7,-25,14,50);ctx.strokeRect(-7,-25,14,50);ctx.rotate((game.world.time||0)*.8);for(let i=0;i<4;i++){ctx.rotate(Math.PI/2);ctx.fillStyle='#f1efcf';ctx.fillRect(0,-6,34,12);ctx.strokeRect(0,-6,34,12)}}
+  else if(s.type==='windmill'){ctx.fillStyle='#8b623a';ctx.fillRect(-7,-25,14,50);ctx.strokeRect(-7,-25,14,50);ctx.rotate((game.renderTime||0)*.8);for(let i=0;i<4;i++){ctx.rotate(Math.PI/2);ctx.fillStyle='#f1efcf';ctx.fillRect(0,-6,34,12);ctx.strokeRect(0,-6,34,12)}}
   else{ctx.fillStyle='#8b623a';ctx.fillRect(-11,-28,22,56);ctx.strokeRect(-11,-28,22,56);ctx.fillStyle=s.type==='healer'?'#79a966':'#e9b949';ctx.beginPath();ctx.arc(0,-31,16,0,TAU);ctx.fill();ctx.stroke()}ctx.restore();}
 function drawBarWorld(x,y,fraction,label,color){ctx.font='500 10px DM Mono';ctx.textAlign='center';ctx.fillStyle='rgba(38,51,34,.8)';ctx.fillRect(x-28,y,56,6);ctx.fillStyle=color;ctx.fillRect(x-28,y,56*clamp(fraction,0,1),6);ctx.fillStyle='#263322';ctx.fillText(label,x,y-5);}
 function drawLeaf(x,y,size,angle){ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.fillStyle='#44693c';ctx.beginPath();ctx.ellipse(0,0,size,size*.42,0,0,TAU);ctx.fill();ctx.restore();}

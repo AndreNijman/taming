@@ -94,3 +94,25 @@ Authority (b), so both halves apply. The wire protocol stays unchanged.
 Measured in `tests/latency/harness.mjs` at 200 ms RTT, ±40 ms jitter:
 remote stutter frames and position error, and the local player's
 input-to-visible delay, old path against new.
+
+## Result (after the change)
+
+`node tests/latency/harness.mjs` (5 seeds × 120 s, one-way 100 ms ± 40 ms
+per message, in order; old path → new):
+
+```
+Remote tamer: stutter frames                   100.0 →     3.3 %
+Remote tamer: drawn speed error                  289 →       7 px/s
+Remote tamer: drawn this far in the past         149 →     215 ms
+Remote tamer: distance from where it is now     25.9 →    37.6 px
+Own tamer: input to visible movement             284 →       3 ms
+Own tamer: off the server position at rest       0.0 →     0.1 px
+```
+
+The price is about 65 ms more display delay for other entities (the render
+delay that lets the next snapshot arrive), so they are drawn ~12 px further
+behind where they really are; in exchange they move every frame instead of
+every sixth. About 80% of the remaining 3% "stutter" frames fall within
+0.4 s of a start, stop or turn, which any delayed view shows late; the rest
+are the render delay adjusting. Combat is unchanged: the server still
+resolves hits from its own positions.
