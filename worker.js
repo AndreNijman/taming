@@ -1,4 +1,5 @@
 import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js';
+import { NetStats, sendNetLog, coloOf } from './netstats.js';
 
 const WORLD_W = 3200, WORLD_H = 2400;
 const TICK_MS = 50, SNAPSHOT_MS = 100, ROOM_TTL = 45 * 60_000;
@@ -74,6 +75,7 @@ function publicPlayer(player){const copy={...player};delete copy.input;delete co
 export class GameRoom {
   constructor(ctx, env) {
     this.ctx=ctx;this.env=env;this.sessions=new Map();this.players=new Map();this.room='';this.key='';this.host=null;this.settings={max:8,bots:4};this.password='';this.started=false;this.world=null;this.nextId=1;this.timer=null;this.lastTick=0;this.lastSnapshot=0;this.touched=Date.now();
+    this.net=null;this.netLoopAt=0;this.netBots=0;this.colo=''; // lag stats for the expedition in progress
   }
   async fetch(request){
     if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('upgrade required',{status:426});
@@ -92,7 +94,8 @@ export class GameRoom {
     if(typeof raw!=='string'||raw.length>8192)return;let message;try{message=JSON.parse(raw)}catch{return}this.touched=Date.now();
     if(!session.ready){await this.join(session,message);return}const player=this.players.get(session.id);if(!player)return;
     if(message.t==='start'){if(session.id===this.host&&!this.started)this.start();return}
-    if(message.t==='input'&&this.started){player.input={x:clamp(Number(message.x)||0,-1,1),y:clamp(Number(message.y)||0,-1,1),angle:Number.isFinite(message.angle)?message.angle:player.angle,rotation:Number.isFinite(message.rotation)?message.rotation:player.angle+Math.PI/2,attack:!!message.attack,interact:!!message.interact,selected:clamp(Math.floor(Number(message.selected)||0),0,player.loadout.length-1)};return}
+    if(message.t==='ping'){this.net?.ping(session.id,message.rtt,message.fps,message.frameMax);this.send(session.socket,{t:'pong',c:message.c});return}
+    if(message.t==='input'&&this.started){this.net?.message(session.id);player.input={x:clamp(Number(message.x)||0,-1,1),y:clamp(Number(message.y)||0,-1,1),angle:Number.isFinite(message.angle)?message.angle:player.angle,rotation:Number.isFinite(message.rotation)?message.rotation:player.angle+Math.PI/2,attack:!!message.attack,interact:!!message.interact,selected:clamp(Math.floor(Number(message.selected)||0),0,player.loadout.length-1)};return}
     if(message.t==='eat'&&this.started&&!player.dead&&player.hp<player.maxHp){const food=ITEM_BY_ID.get(player.loadout.find(id=>ITEM_BY_ID.get(id)?.slot==='food')),cost=food?.stats.foodUse||5;if(player.resources.food>=cost){player.resources.food-=cost;player.hp=Math.min(player.maxHp,player.hp+(food?.stats.healing||10))}return}
     if(message.t==='choose'&&this.started&&player.choiceAge!==null){const item=ITEM_BY_ID.get(String(message.id||'')),choices=this.getAgeChoiceIds(player,player.choiceAge);if(item&&choices.includes(item.id))this.applyChoice(player,item);return}
     if(message.t==='skill'&&this.started){this.usePetSkill(player,clamp(Math.floor(message.slot||0),0,2));return}
@@ -119,7 +122,7 @@ export class GameRoom {
     this.sessions.delete(session.socket);if(!session.id)return;const wasHost=session.id===this.host;this.players.delete(session.id);if(this.world)delete this.world.players[session.id];
     if(!this.players.size){this.reset();return}if(wasHost)this.host=this.players.keys().next().value;this.sendLobby();this.syncRegistry();
   }
-  reset(){this.removeRegistry();this.room='';this.key='';this.host=null;this.players.clear();this.started=false;this.world=null;this.password='';if(this.timer){clearInterval(this.timer);this.timer=null}}
+  reset(){this.endNetLog('closed');this.removeRegistry();this.room='';this.key='';this.host=null;this.players.clear();this.started=false;this.world=null;this.password='';if(this.timer){clearInterval(this.timer);this.timer=null}}
   sendLobby(){this.broadcast({t:'lobby',name:this.room,host:this.host,settings:this.settings,players:[...this.players.values()].map(p=>({id:p.id,name:p.name,color:p.color}))});}
   async syncRegistry(){if(!this.key)return;const lobby={name:this.room,key:this.key,players:this.players.size,max:this.settings.max,locked:!!this.password,started:this.started,biome:this.world?.biome||'Forest',updated:Date.now()};await this.env.REGISTRY.getByName('global').fetch(new Request('https://registry/upsert',{method:'POST',body:JSON.stringify({key:this.key,lobby})}));}
   async removeRegistry(){if(!this.key)return;await this.env.REGISTRY.getByName('global').fetch(new Request('https://registry/remove',{method:'POST',body:JSON.stringify({key:this.key})}));}
@@ -128,12 +131,16 @@ export class GameRoom {
     this.started=true;this.world=createWorld(Date.now());let index=0;
     for(const player of this.players.values()){Object.assign(player,newPlayer(player.id,player.name,500+index*55,WORLD_H/2+(index%2)*70,player.color));player.bot=false;this.world.players[player.id]=player;index++}
     for(let i=0;i<this.settings.bots&&this.players.size+i<this.settings.max;i++){const id=`b${i}`,bot=newPlayer(id,BOT_NAMES[i%BOT_NAMES.length],300+Math.random()*(WORLD_W-600),300+Math.random()*(WORLD_H-600),COLORS[(index+i)%COLORS.length],true);this.world.players[id]=bot;}
-    this.removeRegistry();for(const session of this.sessions.values())if(session.ready)this.send(session.socket,{t:'start',you:session.id,world:this.serializedWorld()});this.lastTick=Date.now();
+    this.removeRegistry();for(const session of this.sessions.values())if(session.ready)this.send(session.socket,{t:'start',you:session.id,world:this.serializedWorld()});this.lastTick=Date.now();this.startNetLog();
   }
+  // One lag record per expedition, from the host's start until the room empties
+  // (no one can join a started expedition), sent to games-guard's NetLog.
+  startNetLog(){this.endNetLog('abandoned');this.net=new NetStats();this.netLoopAt=0;for(const player of this.players.values())this.net.seat(player.id,player.name);this.netBots=Object.values(this.world.players).filter(p=>p.bot).length;if(!this.colo)coloOf().then(colo=>{this.colo=colo})}
+  endNetLog(outcome){const net=this.net;this.net=null;if(!net)return;const record=net.record({code:this.room,mode:`${net.seats.size}p + ${this.netBots} bots · survival`,outcome,colo:this.colo});if(record.runTime<10)return;sendNetLog(this.env,this.ctx,'wildbound',record)}
   ensureTimer(){if(this.timer)return;this.timer=setInterval(()=>this.tick(),TICK_MS)}
   tick(){
     const now=Date.now();if(now-this.touched>ROOM_TTL){for(const session of this.sessions.values())session.socket.close(1000,'lobby idle');this.reset();return}if(!this.started||!this.world){return}
-    const dt=Math.min(.1,(now-this.lastTick)/1000||.05);this.lastTick=now;this.world.time+=dt;this.world.day=1+Math.floor(this.world.time/180);const timing=getSeasonTiming(this.world.time),nextSeason=timing.index;if(nextSeason!==this.world.season){this.world.season=nextSeason;this.world.biome=SEASONS[nextSeason].name;const boss=this.world.animals.find(animal=>animal.boss);if(boss)Object.assign(boss,makeBoss(SEASONS[nextSeason]));this.event(`${this.world.biome} has reached the range`)}
+    const gap=now-this.lastTick,dt=Math.min(.1,gap/1000||.05);this.lastTick=now;if(this.net){if(this.netLoopAt)this.net.loop(gap,dt*1000,Math.max(0,gap-100));this.netLoopAt=now}this.world.time+=dt;this.world.day=1+Math.floor(this.world.time/180);const timing=getSeasonTiming(this.world.time),nextSeason=timing.index;if(nextSeason!==this.world.season){this.world.season=nextSeason;this.world.biome=SEASONS[nextSeason].name;const boss=this.world.animals.find(animal=>animal.boss);if(boss)Object.assign(boss,makeBoss(SEASONS[nextSeason]));this.event(`${this.world.biome} has reached the range`)}
     for(const player of Object.values(this.world.players)){player.cooldown=Math.max(0,player.cooldown-dt);if(player.dead){player.respawn=Math.max(0,player.respawn-dt);if(player.bot&&player.respawn<=0)this.respawn(player);continue}if(player.bot)this.updateBot(player,dt);else this.applyInput(player,dt)}
     this.updateAnimals(dt);this.updateStructures(dt);this.updateResources(dt);
     if(now-this.lastSnapshot>=SNAPSHOT_MS){this.lastSnapshot=now;this.broadcast({t:'snapshot',world:this.serializedWorld()})}

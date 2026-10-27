@@ -1,4 +1,5 @@
 import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js?v=20260820-6';
+import { NetPing } from './netping.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -11,10 +12,10 @@ const ITEM_BY_ID = new Map(ITEM_CATALOG.map(item => [item.id, item]));
 const itemCost = item => Object.entries(item?.cost || {}).filter(([,value])=>value).map(([key,value])=>`${value}${key[0].toUpperCase()}`).join(' ');
 
 const game = {
-  mode:null, ws:null, room:'', id:null, host:false, running:false, paused:false, dead:false,
+  mode:null, ws:null, pinger:null, room:'', id:null, host:false, running:false, paused:false, dead:false,
   world:null, input:{ x:0, y:0, angle:0, rotation:0, attack:false, interact:false, selected:0 },
   keys:new Set(), pointer:{ x:0, y:0, down:false }, camera:{ x:0, y:0 },
-  last:performance.now(), sendAt:0, localTick:0, feed:[], selected:0, selectedPet:0,
+  last:performance.now(), sendAt:0, pingAt:0, localTick:0, feed:[], selected:0, selectedPet:0,
   autoAttack:false, aimLocked:false, overlay:null, dexSeason:'forest', toastTimer:null,
   missingPlayerSince:0, buildRotationOffset:0, snapshotAt:performance.now(), renderSeason:null,
 };
@@ -90,22 +91,24 @@ function connect(action, roomName, password = '', settings = {}) {
   if (room.length < 3) { $('online-error').textContent = 'Lobby names need at least 3 characters.'; return; }
   $('online-error').textContent = 'Connecting...';
   const url = new URL(`${relayBase().replace(/^http/, 'ws')}/ws`); url.searchParams.set('room', room);
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url), pinger = new NetPing();
   const timer = setTimeout(() => ws.close(), 10000);
   ws.onopen = () => ws.send(JSON.stringify({ t:action, room, password, name:playerName(), settings }));
   ws.onmessage = event => handleMessage(JSON.parse(event.data));
   ws.onerror = () => $('online-error').textContent = 'Could not reach the multiplayer relay.';
   ws.onclose = () => {
     clearTimeout(timer);
+    pinger.stop(); if (game.pinger === pinger) game.pinger = null;
     if (game.ws === ws && game.running) leaveGame('Connection to the range was lost.');
     else if (!game.id) $('online-error').textContent = 'The lobby connection closed.';
   };
-  game.ws = ws; game.mode = 'online'; game.room = room;
+  game.ws = ws; game.pinger = pinger; game.mode = 'online'; game.room = room;
 }
 
 function send(message) { if (game.ws?.readyState === WebSocket.OPEN) game.ws.send(JSON.stringify(message)); }
 function handleMessage(message) {
   if (message.t === 'error') { $('online-error').textContent = message.message; $('lobby-wait').textContent = message.message; return; }
+  if (message.t === 'pong') { game.pinger?.pong(message.c); return; }
   if (message.t === 'welcome') { game.id = message.id; game.host = message.host; $('online-error').textContent = ''; return; }
   if (message.t === 'lobby') { renderLobby(message); return; }
   if (message.t === 'start') { game.id = message.you || game.id; beginWorld(message.world); return; }
@@ -311,7 +314,9 @@ function showDeath(){game.dead=true;$('death').classList.remove('hidden');const 
 function leaveGame(message='') { if(game.ws){game.ws.close();game.ws=null;} game.running=false;game.id=null;game.world=null;game.dead=false;document.body.classList.remove('playing');$('hud').classList.add('hidden');$('pause').classList.add('hidden');$('death').classList.add('hidden');show('landing');if(message)toast(message); }
 
 function sendInput(now){if(game.mode!=='online'||now-game.sendAt<50)return;game.sendAt=now;send({t:'input',...game.input});game.input.interact=false;}
-function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if(game.running&&game.world){updateInput();if(game.mode==='local'&&!game.paused)simulateLocal(dt);sendInput(now);drawWorld();updateHud();}else drawBackdrop(now);requestAnimationFrame(frame);}requestAnimationFrame(frame);
+// Once a second while playing online: this client's ping and frame rate, for the relay's lag log.
+function sendPing(now){if(game.mode!=='online'||!game.pinger||now-game.pingAt<1000)return;game.pingAt=now;send({t:'ping',...game.pinger.next()});}
+function frame(now){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;if(game.running&&game.world){updateInput();if(game.mode==='local'&&!game.paused)simulateLocal(dt);sendInput(now);sendPing(now);drawWorld();updateHud();}else drawBackdrop(now);requestAnimationFrame(frame);}requestAnimationFrame(frame);
 
 function drawBackdrop(now){ctx.setTransform(devicePixelRatio>2?2:devicePixelRatio||1,0,0,devicePixelRatio>2?2:devicePixelRatio||1,0,0);ctx.fillStyle='#afc77e';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.globalAlpha=.22;for(let i=0;i<20;i++){const x=(i*271+now*.004*(i%3))%innerWidth,y=(i*173)%innerHeight;drawLeaf(x,y,18+(i%4)*5,i*.7);}ctx.globalAlpha=1;}
 function drawWorld(){
