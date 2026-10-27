@@ -2,6 +2,7 @@ import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAge
 import { NetPing } from './netping.js';
 import { probeRegions, pingUrl, regionLabel } from './netprobe.js';
 import { SnapshotBuffer, LocalPredictor } from './netsmooth.js';
+import { devPass, joinCode, clearJoinCode, setPlayer, showDevJoined } from './netdev.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -43,6 +44,9 @@ function playerName() {
   return value || 'Wanderer';
 }
 $('player-name').value = localStorage.getItem('wildbound-name') || '';
+// Who is playing where, for games-guard's admin live view (netdev.js).
+setPlayer(playerName(), '');
+$('player-name').addEventListener('change', () => setPlayer(playerName(), game.mode === 'online' && game.id ? game.room : ''));
 function toast(text) {
   $('toast').textContent = text; $('toast').classList.add('on');
   clearTimeout(game.toastTimer); game.toastTimer = setTimeout(() => $('toast').classList.remove('on'), 1800);
@@ -112,9 +116,10 @@ function connect(action, roomName, password = '', settings = {}, moved = null) {
   const url = new URL(`${relayBase().replace(/^http/, 'ws')}/ws`); url.searchParams.set('room', room);
   if (moved?.shard) url.searchParams.set('shard', moved.shard);
   if (moved?.ticket) url.searchParams.set('ticket', moved.ticket);
-  const ws = new WebSocket(url), pinger = new NetPing();
+  // A dev's games-guard pass rides along on every create and join, the shard's after a move too; null for everyone else.
+  const dev = devPass(), ws = new WebSocket(url), pinger = new NetPing();
   const timer = setTimeout(() => ws.close(), 10000);
-  ws.onopen = () => ws.send(JSON.stringify({ t:action, room, password, name:playerName(), settings }));
+  ws.onopen = async () => { const pass = (await dev)?.pass; if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t:action, room, password, name:playerName(), settings, dev:pass })); };
   ws.onmessage = event => { if (game.ws !== ws) return; const message = JSON.parse(event.data); if (message.t === 'welcome') clearTimeout(timer); handleMessage(message); };
   ws.onerror = () => $('online-error').textContent = 'Could not reach the multiplayer relay.';
   ws.onclose = () => {
@@ -138,7 +143,8 @@ function send(message) { if (game.ws?.readyState === WebSocket.OPEN) game.ws.sen
 function handleMessage(message) {
   if (message.t === 'error') { $('online-error').textContent = message.message; $('lobby-wait').textContent = message.message; return; }
   if (message.t === 'pong') { game.pinger?.pong(message.c); return; }
-  if (message.t === 'welcome') { game.id = message.id; game.host = message.host; $('online-error').textContent = ''; sendRegions(); return; }
+  if (message.t === 'welcome') { game.id = message.id; game.host = message.host; $('online-error').textContent = ''; setPlayer(playerName(), game.room); sendRegions(); return; }
+  if (message.t === 'dev-joined') { showDevJoined(message.name); return; }
   if (message.t === 'move') { moveRoom(message); return; }
   if (message.t === 'lobby') { renderLobby(message); return; }
   if (message.t === 'start') { game.id = message.you || game.id; beginWorld(message.world); return; }
@@ -180,7 +186,7 @@ function makeBoss(season,random=Math.random){return{id:'boss',species:season.bos
 function newPlayer(id, name, x, y, color, bot=false) { return { id,name,x,y,vx:0,vy:0,angle:0,color,hp:100,maxHp:100,xp:0,age:0,nextXp:40,resources:{wood:20,stone:10,food:25,gold:0},selected:0,loadout:[...STARTING_ITEMS],unlocks:[...STARTING_ITEMS],choiceAge:null,cooldown:0,actionAt:-99,actionKind:'',actionItem:'',dead:false,kills:0,pets:[],bot,respawn:0,target:null }; }
 
 function startLocal(name) {
-  game.mode='local'; game.id='p1'; game.host=true;
+  game.mode='local'; game.id='p1'; game.host=true; setPlayer(name, '');
   const world=makeWorld(Date.now()); world.players.p1=newPlayer('p1',name,WORLD_W/2,WORLD_H/2,COLORS[0]);
   for(let i=0;i<7;i++) world.players[`b${i}`]=newPlayer(`b${i}`,BOT_NAMES[i],300+Math.random()*(WORLD_W-600),300+Math.random()*(WORLD_H-600),COLORS[i+1],true);
   beginWorld(world);
@@ -344,7 +350,7 @@ $('menu-button').onclick=togglePause;$('resume').onclick=togglePause;$('quit').o
 $('respawn').onclick=()=>{if(game.mode==='online')send({t:'respawn'});else respawnPlayer(game.world.players[game.id]);game.dead=false;$('death').classList.add('hidden');};
 function togglePause(){if(!game.running)return;game.paused=!game.paused;$('pause').classList.toggle('hidden',!game.paused);game.keys.clear();}
 function showDeath(){game.dead=true;$('death').classList.remove('hidden');const me=game.world.players[game.id];$('death-stats').textContent=`Age ${me.age} · ${me.kills} rivals defeated`;}
-function leaveGame(message='') { if(game.ws){game.ws.close();game.ws=null;} game.running=false;game.id=null;game.world=null;game.dead=false;document.body.classList.remove('playing');$('hud').classList.add('hidden');$('pause').classList.add('hidden');$('death').classList.add('hidden');show('landing');if(message)toast(message); }
+function leaveGame(message='') { if(game.ws){game.ws.close();game.ws=null;} game.running=false;game.id=null;game.world=null;game.dead=false;document.body.classList.remove('playing');$('hud').classList.add('hidden');$('pause').classList.add('hidden');$('death').classList.add('hidden');show('landing');setPlayer(playerName(),'');if(message)toast(message); }
 
 function sendInput(now){if(game.mode!=='online'||now-game.sendAt<50)return;game.sendAt=now;send({t:'input',...game.input});game.input.interact=false;}
 // Once a second while playing online: this client's ping and frame rate, for the relay's lag log.
@@ -380,7 +386,7 @@ function localView(player,now){
 }
 function drawBackdrop(now){ctx.setTransform(devicePixelRatio>2?2:devicePixelRatio||1,0,0,devicePixelRatio>2?2:devicePixelRatio||1,0,0);ctx.fillStyle='#afc77e';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.globalAlpha=.22;for(let i=0;i<20;i++){const x=(i*271+now*.004*(i%3))%innerWidth,y=(i*173)%innerHeight;drawLeaf(x,y,18+(i%4)*5,i*.7);}ctx.globalAlpha=1;}
 function drawWorld(){
-  const world=viewWorld(),me=world.players[game.id]||resolveLocalPlayer();if(!me){canvas.dataset.renderError='missing-player';if(!game.missingPlayerSince)game.missingPlayerSince=performance.now();if(game.mode==='online'&&performance.now()-game.missingPlayerSince>1200)leaveGame('Your player left the range. Rejoin the lobby.');return}game.missingPlayerSince=0;delete canvas.dataset.renderError;canvas.dataset.entities=String(Object.keys(world.players).length+world.animals.length+world.resources.filter(node=>node.hp>0).length);canvas.dataset.structures=String(world.structures.length);canvas.dataset.action=me.actionKind||'';canvas.dataset.playerX=String(me.x);canvas.dataset.structureX=String(world.structures[0]?.x??'');canvas.dataset.structureRotation=String(world.structures[0]?.rotation??'');game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
+  const world=viewWorld(),me=world.players[game.id]||resolveLocalPlayer();if(!me){canvas.dataset.renderError='missing-player';if(!game.missingPlayerSince)game.missingPlayerSince=performance.now();if(game.mode==='online'&&performance.now()-game.missingPlayerSince>1200)leaveGame('Your player left the range. Rejoin the lobby.');return}game.missingPlayerSince=0;delete canvas.dataset.renderError;canvas.dataset.entities=String(Object.keys(world.players).length+world.animals.length+world.resources.filter(node=>node.hp>0).length);canvas.dataset.structures=String(world.structures.length);canvas.dataset.tamers=Object.values(world.players).map(p=>`${p.bot?'bot':'human'}:${p.name}`).join(',');canvas.dataset.action=me.actionKind||'';canvas.dataset.playerX=String(me.x);canvas.dataset.structureX=String(world.structures[0]?.x??'');canvas.dataset.structureRotation=String(world.structures[0]?.rotation??'');game.camera.x+=(me.x-game.camera.x)*.12;game.camera.y+=(me.y-game.camera.y)*.12;
   const zoom=1,dpr=Math.min(devicePixelRatio||1,2),visualTime=currentWorldTime(),seasonView=blendedSeason(visualTime),season=seasonView.season;game.renderSeason=season;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=season.palette.ground[0];ctx.fillRect(0,0,innerWidth,innerHeight);
   ctx.save();ctx.translate(innerWidth/2-game.camera.x*zoom,innerHeight/2-game.camera.y*zoom);ctx.scale(zoom,zoom);drawGround(world,season);
   for(const node of world.resources)if(node.hp>0&&onScreen(node))drawResource(node,season);for(const structure of world.structures)if(onScreen(structure))drawStructure(structure);drawPlacementPreview(me);for(const animal of world.animals)if(animal.hp>0&&onScreen(animal))drawAnimal(animal);for(const player of Object.values(world.players))if(!player.dead&&onScreen(player))drawPlayer(player);ctx.restore();
@@ -443,3 +449,12 @@ function drawBarWorld(x,y,fraction,label,color){ctx.font='500 10px DM Mono';ctx.
 function drawLeaf(x,y,size,angle){ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.fillStyle='#44693c';ctx.beginPath();ctx.ellipse(0,0,size,size*.42,0,0,TAU);ctx.fill();ctx.restore();}
 function drawMinimap(world,me){const w=130,h=96,x=innerWidth-w-18,y=92;ctx.fillStyle='rgba(31,44,27,.72)';ctx.fillRect(x,y,w,h);ctx.strokeStyle='#f1efcf';ctx.lineWidth=2;ctx.strokeRect(x,y,w,h);for(const p of Object.values(world.players)){ctx.fillStyle=p.id===game.id?'#e9b949':'rgba(255,255,230,.7)';ctx.beginPath();ctx.arc(x+p.x/WORLD_W*w,y+p.y/WORLD_H*h,p.id===game.id?3:2,0,TAU);ctx.fill()}ctx.fillStyle='#b84e43';for(const animal of world.animals.filter(a=>!a.baby&&a.hp>0)){ctx.fillRect(x+animal.x/WORLD_W*w-1,y+animal.y/WORLD_H*h-1,2,2)}}
 function drawCrosshair(){ctx.strokeStyle='rgba(255,255,230,.8)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(game.pointer.x,game.pointer.y,7,0,TAU);ctx.moveTo(game.pointer.x-11,game.pointer.y);ctx.lineTo(game.pointer.x+11,game.pointer.y);ctx.moveTo(game.pointer.x,game.pointer.y-11);ctx.lineTo(game.pointer.x,game.pointer.y+11);ctx.stroke();}
+
+// The admin page's https://wildbound.andrenijman.com/?join=NAME link: straight into that lobby with the saved name,
+// as a dev when this browser has a pass (connect sends it), otherwise as anyone would (a locked lobby then asks
+// for its password here on the online screen, with the name filled in).
+const deepJoin = joinCode();
+if (deepJoin) {
+  show('online'); $('join-name').value = deepJoin; refreshLobbies(); probeRegions().then(ms => { game.probes = ms; sendRegions(); });
+  connect('join', deepJoin, ''); clearJoinCode();
+}
