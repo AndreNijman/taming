@@ -1,5 +1,6 @@
 import { SEASONS, PETS, PET_BY_ID, ITEMS as ITEM_CATALOG, STARTING_ITEMS, getAgeChoices, getSeasonTiming } from './data.js';
 import { NetStats, sendNetLog, coloOf } from './netstats.js';
+import { playerWhere, withWhere, whereOf, regionOfColo } from './netplace.js';
 
 const WORLD_W = 3200, WORLD_H = 2400;
 const TICK_MS = 50, SNAPSHOT_MS = 100, ROOM_TTL = 45 * 60_000;
@@ -31,10 +32,12 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { headers:{ 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET,OPTIONS', 'Access-Control-Allow-Headers':'Content-Type' } });
     if (url.pathname === '/health') return json({ ok:true });
     if (url.pathname === '/lobbies') return env.REGISTRY.getByName('global').fetch(new Request('https://registry/list'));
-    if (url.pathname !== '/ws' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Wildbound relay', { status:404 });
+    // Only a room's socket and its /ping are forwarded to the room.
+    if (url.pathname !== '/ping' && (url.pathname !== '/ws' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')) return new Response('Wildbound relay', { status:404 });
     const key = roomKey(url.searchParams.get('room'));
     if (key.length < 3) return new Response('invalid lobby name', { status:400 });
-    return env.ROOMS.getByName(key).fetch(request);
+    // Where the player connects from rides along for the lag log (request.cf is only reliable here).
+    return env.ROOMS.getByName(key).fetch(withWhere(request, playerWhere(request)));
   }
 };
 
@@ -75,12 +78,14 @@ function publicPlayer(player){const copy={...player};delete copy.input;delete co
 export class GameRoom {
   constructor(ctx, env) {
     this.ctx=ctx;this.env=env;this.sessions=new Map();this.players=new Map();this.room='';this.key='';this.host=null;this.settings={max:8,bots:4};this.password='';this.started=false;this.world=null;this.nextId=1;this.timer=null;this.lastTick=0;this.lastSnapshot=0;this.touched=Date.now();
-    this.net=null;this.netLoopAt=0;this.netBots=0;this.colo=''; // lag stats for the expedition in progress
+    this.net=null;this.netLoopAt=0;this.netBots=0;this.colo='';this.coloP=null; // lag stats for the expedition in progress
   }
   async fetch(request){
+    const url=new URL(request.url);
+    if(url.pathname==='/ping'){const colo=await this.whereColo();return json({colo,region:regionOfColo(colo)})}
     if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')return new Response('upgrade required',{status:426});
     const pair=new WebSocketPair(),client=pair[0],server=pair[1];server.accept();
-    const session={socket:server,id:null,ready:false};this.sessions.set(server,session);this.touched=Date.now();
+    const session={socket:server,id:null,ready:false,where:whereOf(request)};this.sessions.set(server,session);this.touched=Date.now();
     const timeout=setTimeout(()=>{if(!session.ready)server.close(1008,'handshake timeout')},10_000);
     server.addEventListener('message',event=>this.onMessage(session,event.data).catch(error=>{console.error(error);this.send(server,{t:'error',message:'Relay error'});}));
     server.addEventListener('close',()=>{clearTimeout(timeout);this.remove(session)});server.addEventListener('error',()=>this.remove(session));
@@ -127,6 +132,9 @@ export class GameRoom {
   async syncRegistry(){if(!this.key)return;const lobby={name:this.room,key:this.key,players:this.players.size,max:this.settings.max,locked:!!this.password,started:this.started,biome:this.world?.biome||'Forest',updated:Date.now()};await this.env.REGISTRY.getByName('global').fetch(new Request('https://registry/upsert',{method:'POST',body:JSON.stringify({key:this.key,lobby})}));}
   async removeRegistry(){if(!this.key)return;await this.env.REGISTRY.getByName('global').fetch(new Request('https://registry/remove',{method:'POST',body:JSON.stringify({key:this.key})}));}
 
+  whereColo(){return this.coloP??=this.colo?Promise.resolve(this.colo):coloOf().then(colo=>{this.colo=colo;if(!colo)this.coloP=null;return colo})}
+  sessionOf(id){for(const session of this.sessions.values())if(session.id===id)return session;return null}
+
   start(){
     this.started=true;this.world=createWorld(Date.now());let index=0;
     for(const player of this.players.values()){Object.assign(player,newPlayer(player.id,player.name,500+index*55,WORLD_H/2+(index%2)*70,player.color));player.bot=false;this.world.players[player.id]=player;index++}
@@ -135,8 +143,8 @@ export class GameRoom {
   }
   // One lag record per expedition, from the host's start until the room empties
   // (no one can join a started expedition), sent to games-guard's NetLog.
-  startNetLog(){this.endNetLog('abandoned');this.net=new NetStats();this.netLoopAt=0;for(const player of this.players.values())this.net.seat(player.id,player.name);this.netBots=Object.values(this.world.players).filter(p=>p.bot).length;if(!this.colo)coloOf().then(colo=>{this.colo=colo})}
-  endNetLog(outcome){const net=this.net;this.net=null;if(!net)return;const record=net.record({code:this.room,mode:`${net.seats.size}p + ${this.netBots} bots · survival`,outcome,colo:this.colo});if(record.runTime<10)return;sendNetLog(this.env,this.ctx,'wildbound',record)}
+  startNetLog(){this.endNetLog('abandoned');this.net=new NetStats();this.netLoopAt=0;for(const player of this.players.values())this.net.seat(player.id,player.name,this.sessionOf(player.id)?.where);this.netBots=Object.values(this.world.players).filter(p=>p.bot).length;this.whereColo()}
+  endNetLog(outcome){const net=this.net;this.net=null;if(!net)return;const record=net.record({code:this.room,mode:`${net.seats.size}p + ${this.netBots} bots · survival`,outcome,colo:this.colo,region:regionOfColo(this.colo),moved:null});if(record.runTime<10)return;sendNetLog(this.env,this.ctx,'wildbound',record)}
   ensureTimer(){if(this.timer)return;this.timer=setInterval(()=>this.tick(),TICK_MS)}
   tick(){
     const now=Date.now();if(now-this.touched>ROOM_TTL){for(const session of this.sessions.values())session.socket.close(1000,'lobby idle');this.reset();return}if(!this.started||!this.world){return}
