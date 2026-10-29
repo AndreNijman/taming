@@ -2,8 +2,8 @@
 // Solo games run sim.js locally at the fixed sim rate; online games render
 // snapshots from the relay. Both paths draw from the same decoded snapshots.
 import {
-  SEASONS, seasonAt, TRANSITION, PETS, PET_BY_ID, ITEM_BY_ID, RARITY, PET_STAGE, PET_XP, BOSSES, BOSS_BY_ID,
-  HATS, HAT_BY_ID, SKILLS, TYPES, xpForAge, WORLD, CENTER, ageChoices,
+  BIOMES, BIOME_BY_ID, BIOME_GRID, BIOME_CELL, biomeAt, PETS, PET_BY_ID, ITEM_BY_ID, RARITY, PET_STAGE, PET_XP, BOSSES, BOSS_BY_ID,
+  HATS, HAT_BY_ID, SKILLS, TYPES, xpForAge, WORLD, CENTER, ageChoices, TAME_FOOD,
 } from './data.js';
 import * as S from './sim.js';
 import * as R from './render.js';
@@ -25,13 +25,13 @@ const PREDICT = new URLSearchParams(location.search).get('smooth') !== '0';
 
 const game = {
   mode: null, ws: null, pinger: null, pingAt: 0, room: '', password: '', shard: '', probes: null, roomPings: new Map(), id: null, host: false, running: false, paused: false, dead: false,
-  seed: 0, sk: -1, grid: null, local: null, acc: 0, alpha: 1,
+  seed: 0, gridSeed: null, lifeStart: null, grid: null, local: null, acc: 0, alpha: 1,
   prev: null, cur: null, snapAt: 0, snapGap: 50, lb: [],
   keys: new Set(), pointer: { x: innerWidth / 2, y: innerHeight / 2, down: false }, touch: { mx: 0, my: 0, attack: false },
   camera: { x: CENTER.x, y: CENTER.y }, zoom: 1, input: { mx: 0, my: 0, angle: 0, attack: false, sel: 0 },
   selId: null, auto: false, lock: false, petMode: 'defend',
   floaters: [], particles: [], shake: 0, nodeHits: new Map(), bubbles: new Map(), marker: null,
-  feed: [], lastAction: '', hits: 0, startedAt: 0, overlay: null, dexSeason: 'forest', toastTimer: null, bannerTimer: null,
+  feed: [], lastAction: '', hits: 0, startedAt: 0, overlay: null, dexBiome: 'forest', toastTimer: null, bannerTimer: null,
   sig: {}, view: null, predictor: new Predictor(), netAcc: 0, predAlpha: 0,
 };
 if (isLocalHost) window.wildbound = { game, S };
@@ -108,18 +108,18 @@ $('play-cpu').onclick = () => startLocal(playerName());
 // ---------------- field guide ----------------
 
 function renderGuide() {
-  const tabs = $('dex-seasons'); tabs.replaceChildren();
-  for (const season of SEASONS) {
-    const b = document.createElement('button'); b.textContent = season.name; b.className = season.id === game.dexSeason ? 'active' : '';
-    b.style.setProperty('--season', season.ground);
-    b.onclick = () => { game.dexSeason = season.id; renderGuide(); };
+  const tabs = $('dex-biomes'); tabs.replaceChildren();
+  for (const biome of BIOMES) {
+    const b = document.createElement('button'); b.textContent = biome.name; b.className = biome.id === game.dexBiome ? 'active' : '';
+    b.style.setProperty('--biome', biome.ground);
+    b.onclick = () => { game.dexBiome = biome.id; renderGuide(); };
     tabs.append(b);
   }
-  const season = SEASONS.find(s => s.id === game.dexSeason);
-  const pets = PETS.filter(p => p.season === season.id);
-  $('dex-count').textContent = `${pets.length} animals · ${season.duration / 60} minute season`;
+  const biome = BIOME_BY_ID[game.dexBiome];
+  const pets = PETS.filter(p => p.biome === biome.id);
+  $('dex-count').textContent = `${pets.length} animals live in the ${biome.name.toLowerCase()}`;
   const grid = $('dex-grid'); grid.replaceChildren();
-  grid.style.setProperty('--season', season.ground);
+  grid.style.setProperty('--biome', biome.ground);
   for (const pet of pets) {
     const card = document.createElement('article'); card.className = 'dex-card';
     const art = document.createElement('img'); art.src = R.petPortrait(pet.id, 120).toDataURL(); art.alt = '';
@@ -133,10 +133,10 @@ function renderGuide() {
     card.prepend(art);
     grid.append(card);
   }
-  const boss = BOSS_BY_ID.get(season.boss);
+  const boss = BOSS_BY_ID.get(biome.boss);
   const card = document.createElement('article'); card.className = 'boss-card';
   const art = document.createElement('img'); art.src = R.bossPortrait(boss.id, 120).toDataURL(); art.alt = '';
-  card.innerHTML = `<span class="rarity" style="--c:#e2413b">Boss</span><h3>${escapeHtml(boss.name)}</h3><p>${boss.hp} HP · stands its ground and summons ${PET_BY_ID.get(boss.minions).name.toLowerCase()} packs. Worth ${boss.gold} gold, shared by everyone who hurt it, and it leaves three sleeping babies behind.</p>`;
+  card.innerHTML = `<span class="rarity" style="--c:#e2413b">Boss</span><h3>${escapeHtml(boss.name)}</h3><p>${boss.hp} HP · sleeps until someone strikes it, then throws rings of thorns and summons ${PET_BY_ID.get(boss.minions).name.toLowerCase()} packs. Worth ${boss.gold} gold, shared by everyone who hurt it, and it leaves three sleeping babies behind.</p>`;
   card.prepend(art); grid.append(card);
 }
 $('open-tamodex').onclick = () => { renderGuide(); show('tamodex'); };
@@ -277,7 +277,7 @@ function startLocal(name) {
 
 function beginGame(seed) {
   Object.assign(game, {
-    seed, sk: -1, grid: null, prev: null, cur: null, acc: 0, alpha: 1, running: true, paused: false, dead: false,
+    seed, gridSeed: null, lifeStart: null, grid: null, prev: null, cur: null, acc: 0, alpha: 1, running: true, paused: false, dead: false,
     floaters: [], particles: [], shake: 0, feed: [], selId: null, auto: false, lock: false, petMode: 'defend', lastAction: '',
     hits: 0, startedAt: performance.now(), snapAt: 0, sig: {}, marker: null, netAcc: 0, predAlpha: 0,
   });
@@ -314,15 +314,16 @@ function decodeSnap(s) {
   for (const r of s.a) { const a = S.decodeAnimal(r); animals.set(a.id, a); }
   for (const r of s.j) { const j = S.decodeProjectile(r); projectiles.set(j.id, j); }
   return {
-    time: s.time, sk: s.sk, me: s.me, players, animals, projectiles,
+    time: s.time, me: s.me, players, animals, projectiles,
     structures: s.s.map(S.decodeStructure), hazards: s.h.map(([id, x, y, r, at]) => ({ id, x, y, r, at })), boss: s.boss || [],
   };
 }
 function pushSnap(snap) {
   game.prev = game.cur || snap; game.cur = snap;
-  if (snap.sk !== game.sk) {
-    game.sk = snap.sk;
-    game.grid = S.generateResources(game.seed, snap.sk);
+  // the resource layout is a pure function of the world seed
+  if (game.gridSeed !== game.seed) {
+    game.gridSeed = game.seed;
+    game.grid = S.generateResources(game.seed);
     game.nodeHits.clear();
   }
 }
@@ -416,6 +417,10 @@ function handleEvents(events) {
         break;
       }
       case 'heal': floater(e.x, e.y, `+${e.amt}`, '#7fe05a', 20); break;
+      case 'petxp':
+        // purple xp over every pet that shared the kill
+        for (const id of e.ids) { const a = game.cur?.animals.get(id); if (a && near(a.x, a.y)) floater(a.x, a.y - a.r - 30, `+${e.amt} XP`, '#b48cff', 18, 1.1); }
+        break;
       case 'gather': {
         game.nodeHits.set(e.id, { at: clientNow(), dir: e.ang });
         const color = { wood: '#c8925a', stone: '#b9b4aa', food: '#e2413b', gold: '#ffd23f' }[e.res];
@@ -439,7 +444,7 @@ function handleEvents(events) {
         break;
       case 'tamefail':
         burst(e.x, e.y, '#6b5b4b', 8, { size: 9, speed: 80 });
-        if (e.by === game.id) { toast(`Taming failed at ${e.chance}%. The ${petName(e.species)} is angry!`); game.lastAction = 'tamefail'; }
+        if (e.by === game.id) { toast(`Missed at ${e.chance}%. The ${petName(e.species)} is still asleep, try again`); game.lastAction = 'tamefail'; }
         break;
       case 'grow':
         ring(e.x, e.y, '#7fe05a', 90);
@@ -452,8 +457,6 @@ function handleEvents(events) {
       }
       case 'mill': floater(e.x, e.y - 40, `+${e.amt}`, '#ffd23f', 20, 1.1); pulse('gold'); break;
       case 'msg': if (e.to === game.id) toast(e.text); break;
-      case 'season': banner(`${e.name} has arrived`); addFeed(`The world turns to ${e.name.toLowerCase()}`); break;
-      case 'bossup': addFeed(`${e.name} has awoken`); break;
       case 'boss': banner(`${e.byName || 'Someone'} defeated ${e.name}!`); addFeed(`${e.name} fell. Three babies sleep where it stood`); break;
       case 'wave': if (near(e.x, e.y, 1600)) addFeed(`${e.name} calls its pack`); break;
       case 'impact':
@@ -482,7 +485,8 @@ function showDeath(e) {
   game.dead = true;
   $('age-choice').classList.add('hidden');
   $('death-title').textContent = e.byName ? `${e.byName} defeated you` : 'You were defeated';
-  $('death-stats').textContent = `Age ${e.age} · ${e.gold} gold · ${e.kills} kills. Your pets and buildings are waiting for you.`;
+  const played = Math.max(0, Math.round((game.cur?.time ?? 0) - (game.lifeStart ?? 0)));
+  $('death-stats').textContent = `Age ${e.age} · ${e.gold.toLocaleString()} gold · ${e.kills} kills · ${e.tames ?? 0} tamed · ${Math.floor(played / 60)}:${String(played % 60).padStart(2, '0')} alive. Your pets and buildings are waiting for you.`;
   $('death').classList.remove('hidden');
 }
 $('respawn').onclick = () => cmd({ t: 'respawn' });
@@ -649,14 +653,34 @@ function renderShop() {
   }
 }
 
+/** The closest biome other than `id`, measured to the edge of its square. */
+function nearestOtherBiome(x, y, id) {
+  let best = null, bd = Infinity;
+  BIOME_GRID.forEach((row, j) => row.forEach((b, i) => {
+    if (b === id) return;
+    const dx = Math.max(i * BIOME_CELL - x, 0, x - (i + 1) * BIOME_CELL), dy = Math.max(j * BIOME_CELL - y, 0, y - (j + 1) * BIOME_CELL);
+    const d = Math.hypot(dx, dy); if (d < bd) { bd = d; best = b; }
+  }));
+  return BIOME_BY_ID[best];
+}
+
+const bossHeads = new Map();
+function bossHead(id) {
+  if (!BOSS_BY_ID.has(id)) return null;
+  if (!bossHeads.has(id)) bossHeads.set(id, R.bossPortrait(id, 48));
+  return bossHeads.get(id);
+}
+
 function drawMap(cv, full) {
   const m = cv.getContext('2d'), size = cv.width, k = size / WORLD.w;
-  const view = game.view, season = seasonAt(view?.t ?? 0).season;
-  m.fillStyle = season.ground; m.fillRect(0, 0, size, size);
-  m.fillStyle = 'rgba(20,14,6,.35)'; m.fillRect(0, 0, size, size);
+  const view = game.view, cell = BIOME_CELL * k;
+  // biomes as dimmed squares, darker on the small map so the icons stand out
+  BIOME_GRID.forEach((row, j) => row.forEach((id, i) => { m.fillStyle = BIOME_BY_ID[id].ground; m.fillRect(i * cell, j * cell, cell + 1, cell + 1); }));
+  m.fillStyle = full ? 'rgba(20,14,6,.3)' : 'rgba(26,18,10,.62)'; m.fillRect(0, 0, size, size);
   if (full && game.grid) {
     for (const n of game.grid.list) {
-      m.fillStyle = n.type === 'tree' ? season.tree[0] : n.type === 'rock' ? season.rock[0] : n.type === 'bush' ? season.bush[0] : n.type.includes('gold') ? '#f2c230' : '#a8743f';
+      const b = BIOME_BY_ID[n.biome];
+      m.fillStyle = n.type === 'tree' ? b.tree[0] : n.type === 'rock' ? b.rock[0] : n.type === 'bush' ? b.bush[0] : n.type.includes('gold') ? '#f2c230' : '#a8743f';
       m.globalAlpha = .7; m.beginPath(); m.arc(n.x * k, n.y * k, Math.max(1.5, n.r * k), 0, TAU); m.fill();
     }
     m.globalAlpha = 1;
@@ -665,7 +689,9 @@ function drawMap(cv, full) {
   m.beginPath(); m.arc(CENTER.x * k, CENTER.y * k, full ? 7 : 4, 0, TAU); m.fill(); m.stroke();
   for (const s of game.cur?.structures || []) if (s.owner === game.id) { m.fillStyle = '#f4ead2'; m.fillRect(s.x * k - 1.5, s.y * k - 1.5, 3, 3); }
   for (const [x, y, , id] of game.cur?.boss || []) {
-    m.fillStyle = '#e2413b'; m.beginPath(); m.arc(x * k, y * k, full ? 9 : 5, 0, TAU); m.fill(); m.stroke();
+    const head = bossHead(id);
+    if (head) { const d = full ? 26 : 16; m.drawImage(head, x * k - d / 2, y * k - d / 2, d, d); }
+    else { m.fillStyle = '#e2413b'; m.beginPath(); m.arc(x * k, y * k, full ? 9 : 5, 0, TAU); m.fill(); m.stroke(); }
     if (full) { m.font = '700 13px "Baloo 2", sans-serif'; m.textAlign = 'center'; m.fillStyle = '#fff'; m.strokeText(BOSS_BY_ID.get(id)?.name || '', x * k, y * k - 14); m.fillText(BOSS_BY_ID.get(id)?.name || '', x * k, y * k - 14); }
   }
   if (full) for (const [id, name, , , , x, y] of game.lb) {
@@ -697,7 +723,7 @@ function resIcon(res) {
   const c = cv.getContext('2d'); c.translate(32, 32);
   const type = { wood: 'log', stone: 'rock', gold: 'gold' }[res];
   c.scale(.62, .62);
-  R.drawResource(c, { id: `icon-${res}`, type, x: 0, y: 0, r: type === 'log' ? 26 : 34 }, SEASONS[0], 0);
+  R.drawResource(c, { id: `icon-${res}`, type, x: 0, y: 0, r: type === 'log' ? 26 : 34 }, BIOMES[0], 0);
   return (resIconUrls[res] = cv.toDataURL());
 }
 const costText = cost => Object.entries(cost || {}).map(([k, v]) => `${v}${k[0]}`).join(' ');
@@ -770,8 +796,10 @@ function updateHud(now) {
   if (target && !me.dead) {
     const def = PET_BY_ID.get(target.species);
     const chance = S.tameChance(me, target);
-    if (changed('tame', `${target.id}|${Math.round(chance)}|${data.pets.length}`)) {
-      tp.innerHTML = data.pets.length >= 3 ? `Pet slots full` : `<svg viewBox="0 0 24 24"><path d="M12 13c3 0 6 3 6 5.5S16 21 12 21s-6-.5-6-2.5S9 13 12 13zM5 8a2 2.5 0 1 1 0 .1zM19 8a2 2.5 0 1 1 0 .1zM9 4a2 2.5 0 1 1 0 .1zM15 4a2 2.5 0 1 1 0 .1z"/></svg> Tame ${escapeHtml(def.name)} <b>${Math.round(chance)}%</b> <kbd>Space</kbd>`;
+    const fed = data.res.food >= TAME_FOOD;
+    if (changed('tame', `${target.id}|${Math.round(chance)}|${data.pets.length}|${fed}`)) {
+      tp.classList.toggle('starved', !fed);
+      tp.innerHTML = data.pets.length >= 3 ? `Pet slots full` : !fed ? `Taming needs ${TAME_FOOD} food` : `<svg viewBox="0 0 24 24"><path d="M12 13c3 0 6 3 6 5.5S16 21 12 21s-6-.5-6-2.5S9 13 12 13zM5 8a2 2.5 0 1 1 0 .1zM19 8a2 2.5 0 1 1 0 .1zM9 4a2 2.5 0 1 1 0 .1zM15 4a2 2.5 0 1 1 0 .1z"/></svg> Tame ${escapeHtml(def.name)} <b>${Math.round(chance)}%</b> <small>−${TAME_FOOD} food</small> <kbd>Space</kbd>`;
     }
     tp.classList.remove('hidden');
   } else tp.classList.add('hidden');
@@ -784,21 +812,25 @@ function updateHud(now) {
     if (poison) tags.push('Poisoned'); if (burn) tags.push('Burning'); if (slow) tags.push('Slowed'); if (armor) tags.push('Armored'); if (haste) tags.push('Hasted');
     $('flags').innerHTML = tags.map(t => `<span>${t}</span>`).join('');
   }
-  // season chip
-  const s = seasonAt(view.t);
-  const left = Math.max(0, Math.ceil(s.remaining));
-  if (changed('season', `${s.season.id}|${left}`)) {
-    $('season-chip').innerHTML = `<i style="--c:${s.season.ground}"></i>${s.season.name}<small>${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</small>`;
+  // biome strip above the minimap: where you are, shading into the nearest neighbour
+  const here = biomeAt(me.x, me.y), next = nearestOtherBiome(me.x, me.y, here.id);
+  if (changed('biome', `${here.id}|${next.id}`)) {
+    $('biome-strip').innerHTML = `<i style="--a:${here.ground};--b:${next.ground}"></i><b>${here.name}</b>`;
   }
-  // boss bar
-  const boss = (game.cur.boss || []).map(([x, y, frac, id]) => ({ x, y, frac, id })).find(b => Math.hypot(b.x - me.x, b.y - me.y) < 1300);
+  // boss bar: only for a boss that is awake and close
+  const boss = (game.cur.boss || []).map(([x, y, frac, id, sleep]) => ({ x, y, frac, id, sleep })).find(b => !b.sleep && Math.hypot(b.x - me.x, b.y - me.y) < 1300);
   $('boss-bar').classList.toggle('hidden', !boss);
-  if (boss) { $('boss-bar').querySelector('b').textContent = BOSS_BY_ID.get(boss.id)?.name || 'Boss'; $('boss-bar').querySelector('i').style.width = `${boss.frac * 100}%`; }
+  if (boss) {
+    if (changed('bossface', boss.id)) { const face = $('boss-bar').querySelector('img'); face.src = R.bossPortrait(boss.id, 64).toDataURL(); }
+    $('boss-bar').querySelector('b').textContent = BOSS_BY_ID.get(boss.id)?.name || 'Boss'; $('boss-bar').querySelector('i').style.width = `${boss.frac * 100}%`;
+  }
+  if (changed('counts', `${data.kills}|${data.tames}`)) { $('count-kills').textContent = data.kills; $('count-tames').textContent = data.tames ?? 0; }
   // leaderboard
   if (changed('lb', JSON.stringify(game.lb.map(r => r.slice(0, 4))))) {
     $('leaderboard').innerHTML = `<h3>Leaderboard</h3>${game.lb.map(([id, name, gold], i) => `<p class="${id === game.id ? 'me' : ''}"><span>${i + 1}.</span><b>${escapeHtml(name)}</b><em>${gold.toLocaleString()}</em></p>`).join('')}`;
   }
-  if (game.dead && !me.dead) { game.dead = false; $('death').classList.add('hidden'); }
+  if (game.dead && !me.dead) { game.dead = false; game.lifeStart = game.cur.time; $('death').classList.add('hidden'); }
+  game.lifeStart ??= game.cur.time;
   if (!game.dead && me.dead) $('death').classList.remove('hidden');
   if (now - (game.minimapAt || 0) > 150) { game.minimapAt = now; drawMap($('minimap'), false); renderFeed(); }
   if (game.overlay === 'shop' && changed('shop', `${data.res.gold}|${me.hat}|${data.hats.join()}`)) renderShop();
@@ -842,7 +874,7 @@ function renderPets(view, data) {
       const card = document.createElement('div'); card.className = `pet${p ? '' : ' empty'}`;
       if (p) {
         const def = PET_BY_ID.get(p.species);
-        card.innerHTML = `<img src="${R.petPortrait(p.species, 96).toDataURL()}" alt=""><div><b>${escapeHtml(def.name)}</b><small>${PET_STAGE[p.stage]} · ${def.types.join('/')}</small><span class="hp"><i></i></span><span class="xp"><i></i></span></div><em class="cd" title="${SKILLS[def.skill].name}"></em>`;
+        card.innerHTML = `<span class="face"><img src="${R.petPortrait(p.species, 96).toDataURL()}" alt=""><u>${i + 1}</u><q class="lvl"></q></span><div><b>${escapeHtml(def.name)}</b><small>${PET_STAGE[p.stage]} · ${def.types.join('/')}</small><span class="hp"><i></i></span><span class="xp"><i></i></span></div><em class="cd" title="${SKILLS[def.skill].name}"></em>`;
         card.onclick = () => cmd({ t: 'skill', slot: i });
       } else card.innerHTML = '<small>Empty slot</small>';
       box.append(card);
@@ -859,6 +891,7 @@ function renderPets(view, data) {
   pets.forEach((p, i) => {
     const card = cards[i]; if (!card) return;
     card.querySelector('.hp i').style.width = `${clamp(p.hp / p.maxHp, 0, 1) * 100}%`;
+    card.querySelector('.lvl').textContent = p.level || 1;
     card.querySelector('.xp i').style.width = p.stage >= 2 ? '100%' : `${clamp(p.xp / PET_XP[p.stage], 0, 1) * 100}%`;
     const cdLeft = S.skillCooldown(p) - (view.t - p.skillAt);
     const cd = card.querySelector('.cd');
@@ -877,8 +910,9 @@ function drawWorld(now, dt) {
   const view = game.view = buildView();
   const { t, me } = view;
   const W = innerWidth, H = innerHeight, dpr = canvas.width / W;
-  let zoom = Math.max(W / 1900, H / 1070);
-  if (W / zoom < 1000) zoom = W / 1000;
+  // the tamer is about 1/12 of the screen height, as in the reference footage
+  let zoom = Math.max(W / 1500, H / 845);
+  if (W / zoom < 800) zoom = W / 800;
   game.zoom = zoom;
   if (me) { game.camera.x = lerp(game.camera.x, me.x, Math.min(1, dt * 14)); game.camera.y = lerp(game.camera.y, me.y, Math.min(1, dt * 14)); }
   const cam = game.camera, viewW = W / zoom, viewH = H / zoom;
@@ -887,11 +921,7 @@ function drawWorld(now, dt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.translate(W / 2 + sx, H / 2 + sy); ctx.scale(zoom, zoom); ctx.translate(-cam.x, -cam.y);
 
-  const sa = seasonAt(t);
-  const first = sa.cycle === 0 && sa.index === 0;
-  const blend = first ? 1 : clamp(sa.elapsed / TRANSITION, 0, 1);
-  const prevSeason = SEASONS[(sa.index + SEASONS.length - 1) % SEASONS.length];
-  R.drawGround(ctx, cam, viewW + 40, viewH + 40, t, sa.season, prevSeason, blend);
+  R.drawGround(ctx, cam, viewW + 40, viewH + 40, t);
 
   const inView = (e, pad = 160) => Math.abs(e.x - cam.x) < viewW / 2 + pad && Math.abs(e.y - cam.y) < viewH / 2 + pad;
   const nowS = clientNow();
@@ -904,7 +934,7 @@ function drawWorld(now, dt) {
   }
   for (const h of view.hazards) R.drawHazard(ctx, h, t);
   const nodes = game.grid ? game.grid.list.filter(n => inView(n, n.r + 60)) : [];
-  const drawNode = n => { const hit = game.nodeHits.get(n.id); R.drawResource(ctx, hit ? { ...n, hitDir: hit.dir } : n, sa.season, t, hit ? nowS - hit.at : 9); drawn++; };
+  const drawNode = n => { const hit = game.nodeHits.get(n.id); R.drawResource(ctx, hit ? { ...n, hitDir: hit.dir } : n, undefined, t, hit ? nowS - hit.at : 9); drawn++; };
   for (const n of nodes) if (n.type !== 'tree') drawNode(n);
   for (const s of view.structures) {
     if (!SOLID_KINDS.has(ITEM_BY_ID.get(s.item)?.kind) || !inView(s)) continue;
@@ -929,14 +959,16 @@ function drawWorld(now, dt) {
   for (const f of game.floaters) R.drawFloater(ctx, f, nowS);
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const dark = (sa.season.dark ? blend : 0) + (prevSeason.dark && !first ? 1 - blend : 0);
+  // walking into the darkness closes the light in around you over a second
+  const want = me && biomeAt(me.x, me.y).dark ? 1 : 0;
+  game.dark = clamp((game.dark || 0) + Math.sign(want - (game.dark || 0)) * dt, 0, 1);
+  const dark = game.dark;
   if (dark > 0 && me) {
     const px = W / 2 + (me.x - cam.x) * zoom, py = H / 2 + (me.y - cam.y) * zoom;
     const g = ctx.createRadialGradient(px, py, 260 * zoom, px, py, 760 * zoom);
     g.addColorStop(0, 'rgba(8,6,24,0)'); g.addColorStop(1, `rgba(8,6,24,${.93 * dark})`);
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
-  if (sa.season.meteors && blend < 1) { ctx.fillStyle = `rgba(255,90,30,${(1 - blend) * .15})`; ctx.fillRect(0, 0, W, H); }
   writeTestHooks(view, drawn);
 }
 
@@ -975,8 +1007,10 @@ function drawLabels(view, t) {
     if (a.sleep && me && Math.hypot(a.x - me.x, a.y - me.y) < 700) {
       const chance = S.tameChance(me, a);
       R.drawNameplate(ctx, a.x, a.y - a.r - 6, `${def.name} · ${Math.round(chance)}%`, null, null);
-    } else if (mine) {
-      R.drawNameplate(ctx, a.x, a.y - a.r - 6, def.name, null, null);
+    } else if (a.owner) {
+      // level pill for every tamed pet; your own also carry their slot number
+      const slot = mine ? String(game.cur.me.pets.indexOf(a.id) + 1 || '') : '';
+      R.drawNameplate(ctx, a.x + 14, a.y - a.r - 6, slot, null, null, String(a.level || 1), mine ? '#7b4fc9' : '#c2413b');
     }
   }
 }
@@ -1025,16 +1059,16 @@ function writeTestHooks(view, drawn) {
 let backdrop = null;
 function drawBackdrop(now) {
   const W = innerWidth, H = innerHeight, dpr = canvas.width / W;
-  backdrop ??= S.generateResources(20261029, 0).list;
-  const zoom = Math.max(W / 1900, H / 1070) * .9;
-  const cam = { x: 2200 + Math.sin(now * .03) * 500 + now * 8 % 1800, y: 2600 + Math.cos(now * .025) * 300 };
+  backdrop ??= S.generateResources(20261029).list;
+  const zoom = Math.max(W / 1500, H / 845) * .9;
+  const cam = { x: CENTER.x - 900 + Math.sin(now * .03) * 500 + now * 8 % 1800, y: CENTER.y - 400 + Math.cos(now * .025) * 300 };
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-cam.x, -cam.y);
   const vw = W / zoom, vh = H / zoom;
-  R.drawGround(ctx, cam, vw + 40, vh + 40, now, SEASONS[0]);
+  R.drawGround(ctx, cam, vw + 40, vh + 40, now, BIOMES[0]);
   const vis = backdrop.filter(n => Math.abs(n.x - cam.x) < vw / 2 + 150 && Math.abs(n.y - cam.y) < vh / 2 + 150);
-  for (const n of vis) if (n.type !== 'tree') R.drawResource(ctx, n, SEASONS[0], now);
-  for (const n of vis) if (n.type === 'tree') R.drawResource(ctx, n, SEASONS[0], now);
+  for (const n of vis) if (n.type !== 'tree') R.drawResource(ctx, n, BIOMES[0], now);
+  for (const n of vis) if (n.type === 'tree') R.drawResource(ctx, n, BIOMES[0], now);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = 'rgba(30,24,14,.28)'; ctx.fillRect(0, 0, W, H);
 }

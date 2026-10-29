@@ -1,7 +1,7 @@
 // Authoritative game simulation shared by solo play (in the browser) and the
 // multiplayer Durable Object. Pure data in, pure data out: no DOM, no sockets.
 import {
-  WORLD, CENTER, SEASONS, seasonAt, RESOURCE_TYPES, RESOURCE_MIX, ITEM_BY_ID, STARTING_ITEMS, START_RESOURCES,
+  WORLD, CENTER, BIOMES, BIOME_GRID, BIOME_CELL, biomeAt, biomeCells, RESOURCE_TYPES, NODES_PER_CELL, ITEM_BY_ID, STARTING_ITEMS, START_RESOURCES, TAME_FOOD,
   SLOT_ORDER, BUILD_LIMIT, PETS, PET_BY_ID, PET_XP, MAX_PETS, BOSSES, BOSS_BY_ID, HAT_BY_ID, SKILLS,
   xpForAge, MAX_AGE, LAST_CHOICE_AGE, ageChoices, typeMultiplier,
 } from './data.js';
@@ -30,78 +30,78 @@ export function angleDiff(a, b) { let d = (b - a) % TAU; if (d > Math.PI) d -= T
 const item = id => ITEM_BY_ID.get(id);
 const kindOf = s => item(s.item)?.kind;
 
-// ---------------- resources (deterministic per season instance) ----------------
+// ---------------- resources (deterministic per world seed) ----------------
 
-// Resource layout depends only on the world seed and which season instance is
-// running, so clients rebuild it locally and the server never streams it.
-export function generateResources(seed, seasonKey) {
-  const random = rng((seed ^ Math.imul(seasonKey + 1, 0x9E3779B1)) | 0);
-  const list = [{ id: 'gold-heart', type: 'big-gold', x: CENTER.x, y: CENTER.y, r: 110 }];
+// The resource layout depends only on the world seed, so clients rebuild it
+// locally and the server never streams it. Each biome square gets its own
+// mix; rocks often come as a big and a small one side by side.
+export function generateResources(seed) {
+  const random = rng((seed ^ 0x9E3779B1) | 0);
+  const list = [{ id: 'gold-heart', type: 'big-gold', x: CENTER.x, y: CENTER.y, r: 110, biome: 'forest' }];
   const cell = 300, grid = new Map();
   const add = n => { const k = `${Math.floor(n.x / cell)},${Math.floor(n.y / cell)}`; if (!grid.has(k)) grid.set(k, []); grid.get(k).push(n); };
   add(list[0]);
-  const fits = (x, y, r) => {
+  const fits = (x, y, r, gap = 90) => {
     const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const o of grid.get(`${cx + i},${cy + j}`) || []) {
-      if ((o.x - x) ** 2 + (o.y - y) ** 2 < (o.r + r + 90) ** 2) return false;
+      if ((o.x - x) ** 2 + (o.y - y) ** 2 < (o.r + r + gap) ** 2) return false;
     }
     return true;
   };
-  for (let attempt = 0; attempt < 20000 && list.length < RESOURCE_MIX.count; attempt++) {
-    const x = 150 + random() * (WORLD.w - 300), y = 150 + random() * (WORLD.h - 300);
-    let roll = random(), type = 'tree';
-    for (const [t, share] of RESOURCE_MIX.mix) { if (roll < share) { type = t; break; } roll -= share; }
-    const [r0, r1] = RESOURCE_TYPES[type].r, r = Math.round(r0 + random() * (r1 - r0));
-    if (!fits(x, y, r)) continue;
-    const n = { id: `r${seasonKey}-${list.length}`, type, x: Math.round(x), y: Math.round(y), r };
-    list.push(n); add(n);
-  }
+  const pick = mix => { let roll = random(); for (const [t, share] of mix) { if (roll < share) return t; roll -= share; } return mix[0][0]; };
+  BIOME_GRID.forEach((row, j) => row.forEach((id, i) => {
+    const biome = BIOMES.find(b => b.id === id), x0 = i * BIOME_CELL, y0 = j * BIOME_CELL;
+    let placed = 0;
+    for (let attempt = 0; attempt < 4000 && placed < NODES_PER_CELL; attempt++) {
+      // keep a margin inside the map edge, but let nodes sit right up to a biome border
+      const x = Math.max(150, Math.min(WORLD.w - 150, x0 + random() * BIOME_CELL));
+      const y = Math.max(150, Math.min(WORLD.h - 150, y0 + random() * BIOME_CELL));
+      const type = pick(biome.mix);
+      const [r0, r1] = RESOURCE_TYPES[type].r, r = Math.round(r0 + random() * (r1 - r0));
+      if (!fits(x, y, r)) continue;
+      const n = { id: `r${list.length}`, type, x: Math.round(x), y: Math.round(y), r, biome: id };
+      list.push(n); add(n); placed++;
+      if (type === 'rock' && random() < .45) {
+        const a = random() * Math.PI * 2, r2 = Math.round(r * (.55 + random() * .15)), d = r + r2 + 8;
+        const x2 = Math.round(x + Math.cos(a) * d), y2 = Math.round(y + Math.sin(a) * d);
+        if (fits(x2, y2, r2, 0) && biomeAt(x2, y2).id === id) { const m = { id: `r${list.length}`, type, x: x2, y: y2, r: r2, biome: id }; list.push(m); add(m); }
+      }
+    }
+  }));
   return { list, grid, cell };
-}
-
-function setSeason(world, key) {
-  world.seasonKey = key;
-  const res = generateResources(world.seed, key);
-  world.resources = res.list;
-  Object.defineProperty(world, 'grid', { value: res, enumerable: false, configurable: true });
 }
 
 // ---------------- world creation ----------------
 
+/** How many wild animals of one species a biome keeps. */
+const POPULATION = { common: 7, rare: 4, epic: 2, legendary: 1 };
+const BOSS_RESPAWN = 240;
+
 export function createWorld(seed = Date.now(), opts = {}) {
   const world = {
-    seed: seed | 0, time: opts.startTime ?? 0, tick: 0, w: WORLD.w, h: WORLD.h, seasonKey: -1,
+    seed: seed | 0, time: opts.startTime ?? 0, tick: 0, w: WORLD.w, h: WORLD.h,
     players: {}, animals: [], structures: [], projectiles: [], resources: [], hazards: [],
-    events: [], nextId: 1, random: rng(seed | 0), meteorAt: 0,
+    events: [], nextId: 1, random: rng(seed | 0), meteorAt: 0, bossAt: {},
   };
-  syncSeason(world, true);
+  const res = generateResources(world.seed);
+  world.resources = res.list;
+  Object.defineProperty(world, 'grid', { value: res, enumerable: false, configurable: true });
+  for (const def of PETS) {
+    const n = POPULATION[def.rarity];
+    for (let i = 0; i < n; i++) spawnAnimal(world, def, i % 3 === 2 ? 1 : 0);
+  }
+  for (const b of BIOMES) spawnBoss(world, BOSS_BY_ID.get(b.boss));
   return world;
 }
 
-function seasonKeyAt(time) { const s = seasonAt(time); return s.cycle * SEASONS.length + s.index; }
-
-function syncSeason(world, initial = false) {
-  const key = seasonKeyAt(world.time);
-  if (key === world.seasonKey) return;
-  setSeason(world, key);
-  const { season } = seasonAt(world.time);
-  // wild animals leave with the old season; tamed pets stay with their tamers
-  world.animals = world.animals.filter(a => a.owner && !a.dead);
-  for (const def of PETS.filter(p => p.season === season.id)) {
-    const n = def.rarity === 'common' ? 10 : def.rarity === 'rare' ? 6 : def.rarity === 'epic' ? 4 : 2;
-    for (let i = 0; i < n; i++) spawnAnimal(world, def, i % 3 === 2 ? 1 : 0);
-  }
-  spawnBoss(world, BOSS_BY_ID.get(season.boss));
-  // anyone now standing inside a fresh resource gets nudged out
-  for (const p of Object.values(world.players)) collide(world, p);
-  if (!initial) emit(world, { k: 'season', id: season.id, name: season.name });
-}
-
-function freeSpot(world, r = 40, avoidCenter = 0) {
-  const random = world.random;
+/** A clear spot of radius `r` (in `biome` if given), at least `keepAway` from the map centre and from every boss. */
+function freeSpot(world, r = 40, keepAway = 0, biome = null) {
+  const random = world.random, cells = biome ? biomeCells(biome) : [{ x: 0, y: 0, w: world.w, h: world.h }];
   for (let i = 0; i < 300; i++) {
-    const x = 200 + random() * (world.w - 400), y = 200 + random() * (world.h - 400);
-    if (avoidCenter && Math.hypot(x - CENTER.x, y - CENTER.y) < avoidCenter) continue;
+    const c = cells[Math.floor(random() * cells.length)], pad = r + 60;
+    const x = Math.max(200, Math.min(world.w - 200, c.x + pad + random() * (c.w - 2 * pad)));
+    const y = Math.max(200, Math.min(world.h - 200, c.y + pad + random() * (c.h - 2 * pad)));
+    if (keepAway && (Math.hypot(x - CENTER.x, y - CENTER.y) < keepAway || world.animals.some(a => a.boss && Math.hypot(x - a.x, y - a.y) < keepAway + a.r))) continue;
     if (solidAt(world, x, y, r)) continue;
     return { x, y };
   }
@@ -114,7 +114,7 @@ function petStats(def, stage) {
 function animalRadius(stage) { return [30, 40, 52][stage]; }
 
 function spawnAnimal(world, def, stage, at) {
-  const spot = at || freeSpot(world, 60);
+  const spot = at || freeSpot(world, 60, 0, def.biome);
   const st = petStats(def, stage);
   const a = {
     id: `a${world.nextId++}`, species: def.id, x: spot.x, y: spot.y, vx: 0, vy: 0, angle: world.random() * TAU,
@@ -129,15 +129,15 @@ function spawnAnimal(world, def, stage, at) {
   return a;
 }
 
+// Bosses sleep in the middle of their biome until someone hits them.
 function spawnBoss(world, def) {
   if (!def) return;
-  const spot = freeSpot(world, 160, 900);
+  const spot = freeSpot(world, 220, 900, def.biome);
   world.animals.push({
-    id: `boss-${world.seasonKey}`, boss: def.id, species: def.minions, name: def.name, x: spot.x, y: spot.y, vx: 0, vy: 0, angle: 0,
-    r: 120, hp: def.hp, maxHp: def.hp, stage: 2, sleep: false, owner: null, home: { ...spot }, state: 'guard', target: null,
-    attackAt: -9, cd: 0, moving: false, hitAt: -9, waves: 0, dmgBy: {}, lastHurtAt: -99,
+    id: `boss-${def.id}-${world.nextId++}`, boss: def.id, species: def.minions, name: def.name, x: spot.x, y: spot.y, vx: 0, vy: 0, angle: 0,
+    r: 120, hp: def.hp, maxHp: def.hp, stage: 2, sleep: true, owner: null, home: { ...spot }, state: 'guard', target: null,
+    attackAt: -9, cd: 0, moving: false, hitAt: -9, waves: 0, dmgBy: {}, lastHurtAt: -99, volleyAt: 0,
   });
-  emit(world, { k: 'bossup', name: def.name, x: spot.x, y: spot.y });
 }
 
 // ---------------- players ----------------
@@ -146,7 +146,7 @@ export function addPlayer(world, { id, name, bot = false, skin = 0 }) {
   const p = {
     id, name: String(name || 'Tamer').slice(0, 16), bot, skin, hat: 'none', hats: ['none'],
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, r: PLAYER_R, hp: 100, maxHp: 100, dead: false, deadAt: 0,
-    age: 0, xp: 0, kills: 0, res: { ...START_RESOURCES }, items: [...STARTING_ITEMS], sel: 0, held: STARTING_ITEMS[0],
+    age: 0, xp: 0, kills: 0, tames: 0, res: { ...START_RESOURCES }, items: [...STARTING_ITEMS], sel: 0, held: STARTING_ITEMS[0],
     cd: 0, actionAt: -9, hitAt: -9, lastHurtAt: -99, pets: [], choices: [], trappedUntil: 0, slowUntil: 0,
     poison: 0, burn: 0, hot: 0, armorUntil: 0, armor: 0, hasteUntil: 0, haste: 0, shieldUntil: 0, lastHitBy: null,
     input: { mx: 0, my: 0, angle: 0, attack: false, sel: 0 }, best: 0,
@@ -157,9 +157,9 @@ export function addPlayer(world, { id, name, bot = false, skin = 0 }) {
 }
 
 function spawnPlayer(world, p) {
-  const spot = freeSpot(world, 60, 700);
+  const spot = freeSpot(world, 60, 900, 'forest');
   Object.assign(p, {
-    x: spot.x, y: spot.y, vx: 0, vy: 0, dead: false, hp: 100, maxHp: 100, age: 0, xp: 0, kills: 0,
+    x: spot.x, y: spot.y, vx: 0, vy: 0, dead: false, hp: 100, maxHp: 100, age: 0, xp: 0, kills: 0, tames: 0,
     res: { ...START_RESOURCES }, items: [...STARTING_ITEMS], sel: 0, held: STARTING_ITEMS[0], choices: [], cd: 0,
     trappedUntil: 0, slowUntil: 0, poison: 0, burn: 0, hot: 0, armorUntil: 0, hasteUntil: 0,
     shieldUntil: world.time + SPAWN_SHIELD, lastHitBy: null,
@@ -279,17 +279,20 @@ function tryTame(world, p) {
   const a = tameTarget(world, p);
   if (!a) return;
   if (p.pets.length >= MAX_PETS) { emit(world, { k: 'msg', to: p.id, text: 'Your 3 pet slots are full' }); return; }
-  const def = PET_BY_ID.get(a.species);
+  if (world.time < (p.tameAt || 0)) return;
+  if (p.res.food < TAME_FOOD) { emit(world, { k: 'msg', to: p.id, text: `Taming needs ${TAME_FOOD} food` }); return; }
+  // every try feeds the sleeper, win or lose
+  p.res.food -= TAME_FOOD; p.tameAt = world.time + .35;
   const chance = tameChance(p, a);
   p.actionAt = world.time; p.held = foodItem(p)?.id || 'apple';
   if (world.random() * 100 < chance) {
     a.owner = p.id; a.sleep = false; a.state = 'follow'; a.target = null; a.xp = 0; a.mode = 'defend'; a.bonus = 0;
-    p.pets.push(a.id);
+    p.pets.push(a.id); p.tames++;
     gainXp(world, p, 50);
     emit(world, { k: 'tame', by: p.id, name: p.name, id: a.id, species: a.species, x: a.x, y: a.y, chance: Math.round(chance) });
   } else {
-    // a failed attempt wakes the baby and makes it hostile toward the tamer
-    a.sleep = false; a.bonus = 0; a.state = 'chase'; a.target = p.id; a.angry = true; a.sleepAt = world.time + 40;
+    // a miss leaves it asleep, a little easier next time, and dozing a little longer
+    a.bonus = (a.bonus || 0) + 2; a.wakeAt = Math.max(a.wakeAt, world.time + 8);
     emit(world, { k: 'tamefail', by: p.id, x: a.x, y: a.y, chance: Math.round(chance), species: a.species });
   }
 }
@@ -308,14 +311,33 @@ function gainXp(world, p, amt) {
 }
 function gainGold(p, amt) { p.res.gold += amt; p.best = Math.max(p.best, p.res.gold); }
 
+/** A pet's level from all the xp it ever earned: 1 when tamed, about 5 when it grows up, 60 at most. */
+export function petLevel(total) { return Math.min(60, 1 + Math.floor(Math.sqrt((total || 0) / 25))); }
+/** Each level past 1 adds 3% to a pet's health and bite. */
+export const levelBoost = level => 1 + .03 * ((level || 1) - 1);
+
 function petXp(world, a, amt) {
-  if (!a.owner || a.stage >= 2 || amt <= 0) return;
+  if (!a?.owner || amt <= 0) return;
+  a.total = (a.total || 0) + amt;
+  const level = petLevel(a.total), def = PET_BY_ID.get(a.species);
+  if (level !== (a.level || 1)) {
+    const frac = a.hp / a.maxHp;
+    a.level = level; a.maxHp = Math.round(petStats(def, a.stage).hp * levelBoost(level)); a.hp = Math.min(a.maxHp, a.maxHp * frac + 10);
+  }
+  if (a.stage >= 2) return;
   a.xp += amt;
   if (a.xp < PET_XP[a.stage]) return;
   a.xp = 0; a.stage++;
-  const def = PET_BY_ID.get(a.species), st = petStats(def, a.stage);
-  a.maxHp = st.hp; a.hp = st.hp; a.r = animalRadius(a.stage);
+  a.maxHp = Math.round(petStats(def, a.stage).hp * levelBoost(a.level)); a.hp = a.maxHp; a.r = animalRadius(a.stage);
   emit(world, { k: 'grow', id: a.id, owner: a.owner, stage: a.stage, species: a.species, x: a.x, y: a.y });
+}
+/** Kill xp for a tamer's pets is one pot split between the pets close to the kill: one pet takes it all, three take a third each. */
+function sharePetXp(world, owner, pot, x, y) {
+  const pets = world.animals.filter(a => a.owner && a.owner === owner && !a.dead && Math.hypot(a.x - x, a.y - y) < 1100);
+  if (!pets.length) return;
+  const amt = Math.round(pot / pets.length);
+  for (const a of pets) petXp(world, a, amt);
+  emit(world, { k: 'petxp', owner, ids: pets.map(a => a.id), amt });
 }
 
 // ---------------- collision ----------------
@@ -436,10 +458,10 @@ function killPlayer(world, p, by) {
     killer.kills++;
     gainGold(killer, Math.floor(p.res.gold / 6));
     gainXp(world, killer, 100 + p.age * 10);
-    for (const id of killer.pets) petXp(world, world.animals.find(a => a.id === id), 150);
+    sharePetXp(world, killer.id, 450 + p.age * 15, p.x, p.y);
   }
   for (const id of p.pets) { const a = world.animals.find(x => x.id === id); if (a) { a.target = null; a.state = 'follow'; } }
-  emit(world, { k: 'death', id: p.id, name: p.name, by: killer?.id || null, byName: killer?.name || (by?.species ? PET_BY_ID.get(by.species)?.name : by?.boss ? BOSS_BY_ID.get(by.boss)?.name : null), gold: p.res.gold, age: p.age, kills: p.kills, x: p.x, y: p.y });
+  emit(world, { k: 'death', id: p.id, name: p.name, by: killer?.id || null, byName: killer?.name || (by?.species ? PET_BY_ID.get(by.species)?.name : by?.boss ? BOSS_BY_ID.get(by.boss)?.name : null), gold: p.res.gold, age: p.age, kills: p.kills, tames: p.tames, x: p.x, y: p.y });
 }
 
 function killAnimal(world, a, by) {
@@ -461,14 +483,14 @@ function killAnimal(world, a, by) {
       const share = d / total;
       gainGold(p, Math.round(def.gold * share)); gainXp(world, p, Math.round(def.xp * share)); p.res.food += Math.round(300 * share);
     }
-    const season = seasonAt(world.time).season;
-    const pool = PETS.filter(p => p.season === season.id).sort((x, y) => ['common', 'rare', 'epic', 'legendary'].indexOf(y.rarity) - ['common', 'rare', 'epic', 'legendary'].indexOf(x.rarity));
+    const pool = PETS.filter(p => p.biome === def.biome).sort((x, y) => ['common', 'rare', 'epic', 'legendary'].indexOf(y.rarity) - ['common', 'rare', 'epic', 'legendary'].indexOf(x.rarity));
     for (let i = 0; i < 3; i++) {
       const baby = spawnAnimal(world, pool[i % Math.min(2, pool.length)], 0, { x: a.x + Math.cos(i * 2.1) * 140, y: a.y + Math.sin(i * 2.1) * 140 });
       baby.sleep = true; baby.wakeAt = world.time + 60; baby.bonus = 10;
     }
     emit(world, { k: 'boss', by: killer?.id, byName: killer?.name, name: def.name, x: a.x, y: a.y });
     world.animals = world.animals.filter(x => x !== a);
+    world.bossAt[def.id] = world.time + BOSS_RESPAWN;
     return;
   }
   if (killer) {
@@ -476,7 +498,7 @@ function killAnimal(world, a, by) {
     killer.res.food += [8, 20, 60][a.stage];
   }
   // pets that helped grow from the kill
-  for (const x of world.animals) if (x.owner && x.owner === ownerOf(by)) petXp(world, x, [40, 90, 300][a.stage]);
+  if (ownerOf(by)) sharePetXp(world, ownerOf(by), [120, 270, 900][a.stage], a.x, a.y);
   emit(world, { k: 'kill', id: a.id, x: a.x, y: a.y, species: a.species });
   a.respawnAt = world.time + 20;
 }
@@ -590,17 +612,20 @@ export function placeable(world, x, y, it) {
 
 export function step(world, dt) {
   world.time += dt; world.tick++;
-  syncSeason(world);
+  for (const [id, at] of Object.entries(world.bossAt)) if (world.time >= at) { delete world.bossAt[id]; spawnBoss(world, BOSS_BY_ID.get(id)); }
   for (const p of Object.values(world.players)) updatePlayer(world, p, dt);
   for (const a of [...world.animals]) updateAnimal(world, a, dt);
   updateStructures(world, dt);
   updateProjectiles(world, dt);
   updateHazards(world, dt);
   // soft separation between bodies
-  const bodies = [...Object.values(world.players).filter(p => !p.dead), ...world.animals.filter(a => !a.dead && !a.boss)];
+  // sorted by x so each body only checks the few within reach (bodies are at most 2 * MAX_BODY_R apart when touching)
+  const bodies = [...Object.values(world.players).filter(p => !p.dead), ...world.animals.filter(a => !a.dead && !a.boss)].sort((a, b) => a.x - b.x);
+  const reach = 2 * Math.max(0, ...bodies.map(b => b.r));
   for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
     const a = bodies[i], b = bodies[j];
     const dx = b.x - a.x, dy = b.y - a.y, min = a.r + b.r;
+    if (dx > reach) break;
     if (Math.abs(dx) > min || Math.abs(dy) > min) continue;
     const d = Math.hypot(dx, dy);
     if (d > 0 && d < min) { const k = (min - d) / d * .25; a.x -= dx * k; a.y -= dy * k; b.x += dx * k; b.y += dy * k; }
@@ -613,7 +638,7 @@ function moveSpeed(world, p, it) {
   if (world.time < p.hasteUntil) s *= 1 + p.haste;
   const h = hat(p);
   if (h.slow) s *= 1 - h.slow;
-  if (h.biome && h.biome === seasonAt(world.time).season.id) s *= 1.15;
+  if (h.biome && h.biome === biomeAt(p.x, p.y).id) s *= 1.15;
   if (world.time < p.trappedUntil) s = 0;
   return s;
 }
@@ -667,7 +692,7 @@ function updateAnimal(world, a, dt) {
     if (!a.owner && world.time >= a.respawnAt) {
       const def = PET_BY_ID.get(a.species);
       world.animals.splice(world.animals.indexOf(a), 1);
-      if (def.season === seasonAt(world.time).season.id) spawnAnimal(world, def, world.random() < .6 ? 0 : 1);
+      spawnAnimal(world, def, world.random() < .6 ? 0 : 1);
     }
     return;
   }
@@ -704,7 +729,7 @@ function updateAnimal(world, a, dt) {
       if (dist(a, target) < a.r + target.r + 16 && world.time >= a.cd) {
         a.cd = world.time + 1; a.attackAt = world.time;
         const m = petDamageVs(a, target).mult, buff = a.buffUntil > world.time ? 1.5 : 1;
-        const dealt = hurt(world, target, st.bite * m * buff * (target.items ? 1 : 1.2), a, { knock: 30, crit: m > 1.5 });
+        const dealt = hurt(world, target, st.bite * levelBoost(a.level) * m * buff * (target.items ? 1 : 1.2), a, { knock: 30, crit: m > 1.5 });
         petXp(world, a, dealt * .5);
       }
     } else if (a.mode === 'stop' || a.mode === 'move') {
@@ -756,6 +781,8 @@ function updateAnimal(world, a, dt) {
       if (world.time > a.wanderAt) {
         a.wanderAt = world.time + 2 + world.random() * 4;
         a.wanderGoal = world.random() < .35 ? null : { x: clamp(a.home.x + (world.random() - .5) * 800, 120, WORLD.w - 120), y: clamp(a.home.y + (world.random() - .5) * 800, 120, WORLD.h - 120) };
+        // wild animals keep to their own biome
+        if (a.wanderGoal && biomeAt(a.wanderGoal.x, a.wanderGoal.y).id !== def.biome) a.wanderGoal = null;
       }
       if (a.wanderGoal) { goal = a.wanderGoal; speed = st.speed * .35; if (dist(a, goal) < 40) a.wanderGoal = null; }
     }
@@ -781,10 +808,21 @@ function steer(world, a, goal, speed, dt) {
 
 function updateBoss(world, a, dt) {
   const def = BOSS_BY_ID.get(a.boss);
-  // regain health slowly when nobody is fighting it
+  // asleep until hit; heals while nobody is fighting it and dozes off again when left alone
   if (world.time - a.lastHurtAt > 15 && a.hp < a.maxHp) { a.hp = Math.min(a.maxHp, a.hp + a.maxHp * .02 * dt); if (a.hp > a.maxHp * .99) { a.dmgBy = {}; a.waves = 0; } }
-  let best = null, bd = (a.r + def.reach) ** 2;
+  if (a.sleep) return;
   const targets = [...Object.values(world.players).filter(p => !p.dead && world.time >= p.shieldUntil), ...world.animals.filter(x => x.owner && !x.dead)];
+  if (world.time - a.lastHurtAt > 20 && !targets.some(t => dist2(t, a) < 900 ** 2)) { a.sleep = true; return; }
+  // a ring of thorns every few seconds at anyone in range
+  if (world.time >= a.volleyAt && targets.some(t => dist2(t, a) < 750 ** 2)) {
+    a.volleyAt = world.time + 4.5;
+    const n = 12, spin = world.random() * TAU, speed = 520;
+    for (let i = 0; i < n; i++) {
+      const ang = spin + i / n * TAU;
+      world.projectiles.push({ id: `j${world.nextId++}`, x: a.x + Math.cos(ang) * (a.r + 10), y: a.y + Math.sin(ang) * (a.r + 10), vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, dmg: Math.round(def.dmg * .3), owner: a.id, boss: true, until: world.time + 1.5, r: 14, kind: 'thorn' });
+    }
+  }
+  let best = null, bd = (a.r + def.reach) ** 2;
   for (const t of targets) { const d = dist2(t, a); if (d < bd) { bd = d; best = t; } }
   if (best) {
     a.angle += angleDiff(a.angle, Math.atan2(best.y - a.y, best.x - a.x)) * Math.min(1, dt * 4);
@@ -946,7 +984,7 @@ function updateProjectiles(world, dt) {
       if ((s.x - j.x) ** 2 + (s.y - j.y) ** 2 < s.r ** 2) { hitStructure(world, s, it?.bdm || 2, by); hit = true; break; }
     }
     if (!hit) for (const t of [...Object.values(world.players), ...world.animals]) {
-      if (t.dead || t.hp <= 0 || t.id === j.owner) continue;
+      if (t.dead || t.hp <= 0 || t.id === j.owner || j.boss && !t.items && !t.owner) continue;
       if ((t.x - j.x) ** 2 + (t.y - j.y) ** 2 >= (t.r + j.r) ** 2) continue;
       hit = true;
       projectileHit(world, j, it, t, by);
@@ -979,12 +1017,11 @@ function projectileHit(world, j, it, t, by) {
   if (shooter && dealt) for (const id of shooter.pets) { const a = world.animals.find(x => x.id === id); if (a && a.mode !== 'stop' && !t.boss) a.target = t.owner ? t.owner : t.id; }
 }
 
-// Volcano meteors: a warning circle, then a heavy impact.
+// Volcano meteors: a warning circle, then a heavy impact, near whoever is in the volcano.
 function updateHazards(world, dt) {
-  const { season } = seasonAt(world.time);
-  if (season.meteors && world.time > world.meteorAt) {
+  if (world.time > world.meteorAt) {
     world.meteorAt = world.time + 2.5 + world.random() * 3;
-    const living = Object.values(world.players).filter(p => !p.dead);
+    const living = Object.values(world.players).filter(p => !p.dead && biomeAt(p.x, p.y).meteors);
     if (living.length) {
       const p = living[Math.floor(world.random() * living.length)];
       const ang = world.random() * TAU, d = world.random() * 500;
@@ -1086,10 +1123,10 @@ export function decodePlayer(r) {
   return { id: r[0], name: r[1], skin: r[2], hat: r[3], x: r[4], y: r[5], angle: r[6], hp: r[7], maxHp: r[8], dead: !!r[9], age: r[10], gold: r[11], held: r[12], actionAt: r[13], hitAt: r[14], shieldUntil: r[15], petCount: r[16], bot: !!r[17], trappedUntil: r[18], r: PLAYER_R };
 }
 export function encodeAnimal(a) {
-  return [a.id, a.species, a.boss || 0, R(a.x), R(a.y), A(a.angle), Math.ceil(a.hp), a.maxHp, a.stage, a.sleep ? 1 : 0, a.owner || 0, a.moving ? 1 : 0, T(a.attackAt), T(a.hitAt), a.r, a.bonus || 0, a.mode || 0, T(a.skillAt ?? -99), a.angry ? 1 : 0, R(a.xp || 0)];
+  return [a.id, a.species, a.boss || 0, R(a.x), R(a.y), A(a.angle), Math.ceil(a.hp), a.maxHp, a.stage, a.sleep ? 1 : 0, a.owner || 0, a.moving ? 1 : 0, T(a.attackAt), T(a.hitAt), a.r, a.bonus || 0, a.mode || 0, T(a.skillAt ?? -99), a.angry ? 1 : 0, R(a.xp || 0), a.level || 1];
 }
 export function decodeAnimal(r) {
-  return { id: r[0], species: r[1], boss: r[2] || null, x: r[3], y: r[4], angle: r[5], hp: r[6], maxHp: r[7], stage: r[8], sleep: !!r[9], owner: r[10] || null, moving: !!r[11], attackAt: r[12], hitAt: r[13], r: r[14], bonus: r[15], mode: r[16] || 'defend', skillAt: r[17], angry: !!r[18], xp: r[19] };
+  return { id: r[0], species: r[1], boss: r[2] || null, x: r[3], y: r[4], angle: r[5], hp: r[6], maxHp: r[7], stage: r[8], sleep: !!r[9], owner: r[10] || null, moving: !!r[11], attackAt: r[12], hitAt: r[13], r: r[14], bonus: r[15], mode: r[16] || 'defend', skillAt: r[17], angry: !!r[18], xp: r[19], level: r[20] || 1 };
 }
 export function encodeStructure(s) { return [s.id, s.item, s.x, s.y, s.r, A(s.rot), R(s.hp), s.maxHp, s.owner, A(s.aim || 0), T(s.hitAt ?? -9), T(s.shotAt ?? -9)]; }
 export function decodeStructure(r) { return { id: r[0], item: r[1], x: r[2], y: r[3], r: r[4], rot: r[5], hp: r[6], maxHp: r[7], owner: r[8], aim: r[9], hitAt: r[10], shotAt: r[11] }; }
@@ -1101,8 +1138,8 @@ export function snapshot(world, selfId) {
   const me = world.players[selfId];
   const c = me || { x: CENTER.x, y: CENTER.y };
   return {
-    t: 'snap', time: T(world.time), sk: world.seasonKey,
-    me: me ? { xp: Math.floor(me.xp), res: { wood: me.res.wood, stone: me.res.stone, food: me.res.food, gold: me.res.gold }, items: me.items, sel: me.sel, choices: me.choices, hats: me.hats, pets: me.pets, kills: me.kills, cd: T(me.cd), fx: [me.poison > 0, me.burn > 0, me.slowUntil > world.time, me.armorUntil > world.time, me.hasteUntil > world.time], lastHitBy: me.lastHitBy,
+    t: 'snap', time: T(world.time),
+    me: me ? { xp: Math.floor(me.xp), res: { wood: me.res.wood, stone: me.res.stone, food: me.res.food, gold: me.res.gold }, items: me.items, sel: me.sel, choices: me.choices, hats: me.hats, pets: me.pets, kills: me.kills, tames: me.tames, cd: T(me.cd), fx: [me.poison > 0, me.burn > 0, me.slowUntil > world.time, me.armorUntil > world.time, me.hasteUntil > world.time], lastHitBy: me.lastHitBy,
       // for prediction: the last input applied, the velocity after it, and the current top speed
       seq: me.seq || 0, v: [A(me.vx), A(me.vy)], spd: A(moveSpeed(world, me, item(me.items[me.sel]) || item('hand'))) } : null,
     p: Object.values(world.players).filter(p => p.id === selfId || inView(p, c, 200)).map(encodePlayer),
@@ -1110,7 +1147,7 @@ export function snapshot(world, selfId) {
     s: world.structures.filter(s => inView(s, c, 120)).map(encodeStructure),
     j: world.projectiles.filter(j => inView(j, c, 200)).map(encodeProjectile),
     h: world.hazards.map(h => [h.id, R(h.x), R(h.y), h.r, T(h.at)]),
-    boss: world.animals.filter(a => a.boss && !a.dead).map(a => [R(a.x), R(a.y), Math.round(a.hp / a.maxHp * 100) / 100, a.boss]),
+    boss: world.animals.filter(a => a.boss && !a.dead).map(a => [R(a.x), R(a.y), Math.round(a.hp / a.maxHp * 100) / 100, a.boss, a.sleep ? 1 : 0]),
   };
 }
 export function leaderboard(world) {

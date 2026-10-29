@@ -21,7 +21,7 @@
     <section id="landing" class="screen">
       <div class="brand">
         <h1>Wildbound<span>.io</span></h1>
-        <p>Gather, build, tame the wild and outlast every season.</p>
+        <p>Gather, build, tame the wild and wake the bosses.</p>
       </div>
       <div class="entry-panel card">
         <input id="player-name" maxlength="16" autocomplete="nickname" placeholder="Enter a name" aria-label="Your name">
@@ -35,7 +35,7 @@
         <ul>
           <li>Babies fall asleep after a while. Walk up to one and press <kbd>Space</kbd> to try taming it.</li>
           <li>Wolves, rabbits and bears are easy to tame. Rare animals need the Appletor or Slingshot to raise your odds.</li>
-          <li>The whole map changes biome every few minutes. Each season has its own animals and a boss.</li>
+          <li>You start in the forest. Winter, darkness, ocean, desert and volcano lie around it, each with its own animals and a sleeping boss.</li>
           <li>Gold is your score. Windmills earn it while you are away.</li>
         </ul>
       </aside>
@@ -56,8 +56,8 @@
     </section>
 
     <section id="tamodex" class="screen hidden collection-screen">
-      <header class="screen-head"><button class="back collection-back" aria-label="Back">←</button><div><span>Every animal by season</span><h2>Field Guide</h2></div></header>
-      <div class="dex-toolbar"><div id="dex-seasons" class="dex-tabs"></div><p id="dex-count"></p></div>
+      <header class="screen-head"><button class="back collection-back" aria-label="Back">←</button><div><span>Every animal by biome</span><h2>Field Guide</h2></div></header>
+      <div class="dex-toolbar"><div id="dex-biomes" class="dex-tabs"></div><p id="dex-count"></p></div>
       <div id="dex-grid" class="dex-grid"></div>
     </section>
 
@@ -93,7 +93,7 @@
       <header class="screen-head"><button id="leave-lobby" class="back" aria-label="Leave lobby">←</button><div><span>Waiting room</span><h2 id="lobby-name">Lobby</h2></div></header>
       <div class="lobby-sheet card">
         <div><h3>Tamers</h3><div id="roster" class="roster"></div></div>
-        <div class="lobby-rules"><h3>Rules</h3><p>One shared world, seasons change for everyone</p><p>Player fights are on</p><p id="lobby-cpu"></p><p id="lobby-region"></p></div>
+        <div class="lobby-rules"><h3>Rules</h3><p>One shared world with six biomes and their bosses</p><p>Player fights are on</p><p id="lobby-cpu"></p><p id="lobby-region"></p></div>
       </div>
       <button id="start-match" class="primary big start-button">Start</button>
       <p id="lobby-wait" class="muted">Only the lobby creator can start.</p>
@@ -106,8 +106,7 @@
         <div id="feed" class="feed"></div>
       </div>
       <div class="hud-tc">
-        <div id="season-chip" class="season-chip"></div>
-        <div id="boss-bar" class="boss-bar hidden"><b></b><span><i></i></span></div>
+        <div id="boss-bar" class="boss-bar hidden"><img alt=""><div><b></b><span><i></i></span></div></div>
         <div id="banner" class="banner"></div>
       </div>
       <div class="hud-tr">
@@ -118,9 +117,14 @@
         </div>
         <div id="ping" class="ping hidden" title="Your ping to the world"></div>
         <div id="leaderboard" class="leaderboard"></div>
+        <div class="counters">
+          <span title="Tamers defeated"><svg viewBox="0 0 24 24"><path d="M12 3c-4.4 0-8 3.1-8 7.2 0 2.4 1.2 4.3 3 5.5V19a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3.3c1.8-1.2 3-3.1 3-5.5C20 6.1 16.4 3 12 3z"/><circle cx="8.8" cy="11" r="2" class="hole"/><circle cx="15.2" cy="11" r="2" class="hole"/></svg><b id="count-kills">0</b></span>
+          <span title="Animals tamed this life"><svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10C19.5 15.4 12 20 12 20z" class="heart"/></svg><b id="count-tames">0</b></span>
+        </div>
       </div>
       <div class="hud-bl">
         <div id="chat" class="chat"><div id="chat-lines"></div></div>
+        <div id="biome-strip" class="biome-strip"></div>
         <canvas id="minimap" width="168" height="168"></canvas>
       </div>
       <div class="hud-bc">

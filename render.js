@@ -1,6 +1,6 @@
 // Canvas renderer. Original outlined-cartoon art: everything is drawn from code
 // with a thick dark outline, a flat fill, one lighter highlight and a soft drop shadow.
-import { ITEM_BY_ID, PET_BY_ID, BOSS_BY_ID, TIERS, WORLD, SEASONS } from './data.js';
+import { ITEM_BY_ID, PET_BY_ID, BOSS_BY_ID, TIERS, WORLD, BIOMES, BIOME_BY_ID, BIOME_GRID, BIOME_CELL, biomeAt } from './data.js';
 
 const TAU = Math.PI * 2;
 const OUTLINE = '#2b241d';
@@ -88,7 +88,7 @@ export function mix(a, b, t) {
 
 const GOLD = ['#f3b52f', '#ffd965', '#7a4c0e'];
 
-export function drawResource(c, node, season = SEASONS[0], time = 0, hitAge = 9) {
+export function drawResource(c, node, season = BIOME_BY_ID[node.biome] || BIOMES[0], time = 0, hitAge = 9) {
   const s = idSeed(node.id) % 100000;
   const shake = hitAge < .2 ? Math.sin(hitAge * 70) * (1 - hitAge / .2) * 6 : 0;
   c.save();
@@ -823,6 +823,19 @@ export function drawBoss(c, a, time, opts = {}) {
   }
   if (opts.flash) { circle(c, 0, 0, R); c.fillStyle = 'rgba(255,60,40,.25)'; c.fill(); }
   c.restore();
+  // a sleeping boss snores big Zs until someone strikes it
+  if (a.sleep) {
+    const t = time * .9 + (s % 10);
+    c.save(); c.textAlign = 'center';
+    for (let i = 0; i < 3; i++) {
+      const ph = (t + i / 3) % 1, size = 26 + i * 8;
+      c.font = `800 ${size}px "Baloo 2", sans-serif`;
+      c.globalAlpha = Math.min(1, (1 - ph) * 1.6); c.lineWidth = 6; c.strokeStyle = OUTLINE; c.fillStyle = '#ffffff';
+      const zx = a.x + R * .55 + ph * 34 + i * 10, zy = a.y - R * .7 - ph * 48 - i * 16;
+      c.strokeText('Z', zx, zy); c.fillText('Z', zx, zy);
+    }
+    c.restore();
+  }
 }
 
 // ---------- structures ----------
@@ -933,6 +946,9 @@ export function drawProjectile(c, j, time) {
       break;
     case 'apple': c.rotate(time * 10); c.translate(-16, 0); drawFoodIcon(c, 'apple'); break;
     case 'pebble': circle(c, 0, 0, 8); ink(c, '#a5a09a', 3); break;
+    case 'thorn':
+      c.beginPath(); c.moveTo(20, 0); c.lineTo(-10, -9); c.lineTo(-4, 0); c.lineTo(-10, 9); c.closePath(); ink(c, '#7a4a2b', 3);
+      break;
     case 'fireball':
       for (let i = 3; i > 0; i--) { circle(c, -i * 9, 0, 6 + i); c.fillStyle = `rgba(255,${120 + i * 30},40,${.25 + .1 * (3 - i)})`; c.fill(); }
       circle(c, 0, 0, 14); ink(c, '#ff7a2e', 3.5); circle(c, 2, -2, 7); c.fillStyle = '#ffe07a'; c.fill();
@@ -961,11 +977,23 @@ export function drawHazard(c, h, time) {
 
 // ---------- ground ----------
 
-export function drawGround(c, cam, viewW, viewH, time, season, prev = null, blend = 1) {
-  const ground = prev && blend < 1 ? mix(prev.ground, season.ground, blend) : season.ground;
-  const decor = prev && blend < 1 ? mix(prev.decor, season.decor, blend) : season.decor;
+/**
+ * The ground under the camera. Each biome square has its own colour and
+ * decor with a hard edge between them; `only` paints one biome everywhere
+ * (the landing backdrop).
+ */
+export function drawGround(c, cam, viewW, viewH, time, only = null) {
   const L = cam.x - viewW / 2, T = cam.y - viewH / 2;
-  c.fillStyle = ground; c.fillRect(L - 2, T - 2, viewW + 4, viewH + 4);
+  if (only) { c.fillStyle = only.ground; c.fillRect(L - 2, T - 2, viewW + 4, viewH + 4); }
+  else {
+    // outside the map takes the colour of the nearest square, then gets darkened below
+    BIOME_GRID.forEach((row, j) => row.forEach((id, i) => {
+      const x0 = i === 0 ? L - 2 : i * BIOME_CELL, x1 = i === 2 ? L + viewW + 2 : (i + 1) * BIOME_CELL;
+      const y0 = j === 0 ? T - 2 : j * BIOME_CELL, y1 = j === 2 ? T + viewH + 2 : (j + 1) * BIOME_CELL;
+      const ax = Math.max(x0, L - 2), bx = Math.min(x1, L + viewW + 2), ay = Math.max(y0, T - 2), by = Math.min(y1, T + viewH + 2);
+      if (bx > ax && by > ay) { c.fillStyle = BIOME_BY_ID[id].ground; c.fillRect(ax, ay, bx - ax, by - ay); }
+    }));
+  }
   const cell = 400;
   const x0 = Math.floor(L / cell) * cell, y0 = Math.floor(T / cell) * cell;
   for (let x = x0; x < L + viewW + cell; x += cell) {
@@ -974,6 +1002,10 @@ export function drawGround(c, cam, viewW, viewH, time, season, prev = null, blen
       for (let i = 0; i < 5; i++) {
         const px = x + hash(s + i) * cell, py = y + hash(s + i * 7 + 1) * cell;
         const kind = hash(s + i * 3 + 2);
+        const season = only || biomeAt(px, py), decor = season.decor;
+        // keep each splash of decor on its own side of a biome edge
+        const edge = only ? 999 : Math.min(...[px, py].map(v => Math.abs(v - Math.round(v / BIOME_CELL) * BIOME_CELL)));
+        if (edge < 60) continue;
         if (season.tuft === 'wave' && kind < .5) {
           c.strokeStyle = decor; c.lineWidth = 6; c.lineCap = 'round';
           const off = Math.sin(time * 1.2 + px * .01) * 8;

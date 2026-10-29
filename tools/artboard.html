@@ -6,9 +6,9 @@
 <script type="module">
 // Visual check of every drawable: node tools/shoot-art.mjs 'http://localhost:4174/tools/artboard.html?s=winter' out.png
 import * as R from '../render.js';
-import { PETS, ITEMS, SEASON_BY_ID, BOSSES } from '../data.js';
+import { PETS, ITEMS, BIOME_BY_ID, BOSSES } from '../data.js';
 const c = document.getElementById('c').getContext('2d');
-const season = SEASON_BY_ID[new URLSearchParams(location.search).get('s') || 'forest'];
+const season = BIOME_BY_ID[new URLSearchParams(location.search).get('s') || 'forest'];
 R.drawGround(c, { x: 800, y: 600 }, 1600, 1200, 1, season);
 let x = 90;
 for (const [type, r] of [['tree', 90], ['rock', 58], ['bush', 40], ['gold', 48], ['cactus', 34], ['log', 44], ['big-gold', 100]]) {

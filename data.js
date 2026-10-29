@@ -3,65 +3,84 @@
 // Mechanics follow publicly documented Taming.io behaviour; all names, art and
 // code here are original.
 
-export const WORLD = { w: 6400, h: 6400 };
+export const WORLD = { w: 9600, h: 9600 };
 export const CENTER = { x: WORLD.w / 2, y: WORLD.h / 2 };
 
-// ---------------- seasons (server-wide biome cycle) ----------------
-// The whole map changes biome on a timer: forest lasts 16 minutes, every
-// other biome 8. Resources and wild animals reshuffle at each change.
-export const SEASONS = [
+// ---------------- biomes (fixed regions of the map) ----------------
+// The map is a 3x3 grid of square regions with hard edges: forest in the
+// middle, where everyone spawns, and the harsher biomes around it. Each
+// biome has its own resources, wild animals and a sleeping boss.
+export const BIOMES = [
   {
-    id: 'forest', name: 'Forest', duration: 960, ground: '#62813b', decor: '#56732f', pebble: '#7a9a4a', tuft: 'grass',
+    id: 'forest', name: 'Forest', ground: '#62813b', decor: '#56732f', pebble: '#7a9a4a', tuft: 'grass',
     tree: ['#97cf3a', '#b5e04f', '#2f4a14'], treeStyle: 'star', rock: ['#a59a87', '#c2b8a6', '#3b3229'],
     bush: ['#4f8a2f', '#66a63c', '#24401a'], berry: '#e2413b', boss: 'old-oak',
+    mix: [['tree', .36], ['rock', .3], ['bush', .22], ['gold', .05], ['log', .07]],
   },
   {
-    id: 'winter', name: 'Winter', duration: 480, ground: '#d6cbbb', decor: '#c7bba9', pebble: '#ece5d9', tuft: 'flake',
+    id: 'winter', name: 'Winter', ground: '#d6cbbb', decor: '#c7bba9', pebble: '#ece5d9', tuft: 'flake',
     tree: ['#f4f0e6', '#ffffff', '#6d6f6c'], treeStyle: 'snow', rock: ['#a9b6bd', '#cdd8dc', '#3f4a52'],
     bush: ['#7fa3a0', '#a1c3bc', '#30464a'], berry: '#5aa8e6', boss: 'frost-golem',
+    mix: [['tree', .38], ['rock', .32], ['bush', .16], ['gold', .07], ['log', .07]],
   },
   {
-    id: 'darkness', name: 'Darkness', duration: 480, ground: '#393361', decor: '#2f2a52', pebble: '#4e4680', tuft: 'grass',
+    id: 'darkness', name: 'Darkness', ground: '#393361', decor: '#2f2a52', pebble: '#4e4680', tuft: 'grass',
     tree: ['#7a5fd0', '#9d86ea', '#1a1433'], treeStyle: 'mushroom', rock: ['#5a5778', '#77749a', '#17152a'],
     bush: ['#3d6f7a', '#4f8d99', '#112a30'], berry: '#7dfcd2', dark: true, boss: 'shade-cap',
+    mix: [['tree', .34], ['rock', .3], ['bush', .22], ['gold', .08], ['log', .06]],
   },
   {
-    id: 'desert', name: 'Desert', duration: 480, ground: '#bc8c4a', decor: '#a97a3c', pebble: '#d4a461', tuft: 'swirl',
+    id: 'desert', name: 'Desert', ground: '#bc8c4a', decor: '#a97a3c', pebble: '#d4a461', tuft: 'swirl',
     tree: ['#d9673b', '#ef8b55', '#4a2414'], treeStyle: 'dead', rock: ['#b9814f', '#d6a06c', '#4a2f1b'],
     bush: ['#8a9a3c', '#a6b752', '#3b4216'], berry: '#e2413b', boss: 'sand-colossus',
+    mix: [['tree', .22], ['rock', .36], ['bush', .1], ['gold', .1], ['cactus', .16], ['log', .06]],
   },
   {
-    id: 'ocean', name: 'Ocean', duration: 480, ground: '#326395', decor: '#3d73a8', pebble: '#4f86bb', tuft: 'wave',
+    id: 'ocean', name: 'Ocean', ground: '#326395', decor: '#3d73a8', pebble: '#4f86bb', tuft: 'wave',
     tree: ['#3f9a6a', '#58b884', '#123425'], treeStyle: 'kelp', rock: ['#3e6f8a', '#5a8eaa', '#1d3646'],
     bush: ['#e8664f', '#ff8a6c', '#4a1a12'], berry: '#ffd2a8', boss: 'deep-kraken',
+    mix: [['tree', .34], ['rock', .3], ['bush', .24], ['gold', .06], ['log', .06]],
   },
   {
-    id: 'volcano', name: 'Volcano', duration: 480, ground: '#4f3335', decor: '#432a2c', pebble: '#ff7b2e', tuft: 'crack',
+    id: 'volcano', name: 'Volcano', ground: '#4f3335', decor: '#432a2c', pebble: '#ff7b2e', tuft: 'crack',
     tree: ['#e0612e', '#ff8b45', '#3a1208'], treeStyle: 'dead', rock: ['#5c4b47', '#7b6762', '#1c1412'],
     bush: ['#7b3b2c', '#9c5038', '#2a120c'], berry: '#ffb02e', meteors: true, boss: 'magma-titan',
+    mix: [['tree', .2], ['rock', .42], ['bush', .12], ['gold', .16], ['log', .1]],
   },
 ];
-export const SEASON_BY_ID = Object.fromEntries(SEASONS.map(s => [s.id, s]));
-export const CYCLE = SEASONS.reduce((n, s) => n + s.duration, 0);
-export const TRANSITION = 4;
-export function seasonAt(time) {
-  let t = ((time % CYCLE) + CYCLE) % CYCLE, index = 0;
-  while (t >= SEASONS[index].duration) { t -= SEASONS[index].duration; index++; }
-  return { index, season: SEASONS[index], elapsed: t, remaining: SEASONS[index].duration - t, cycle: Math.floor(time / CYCLE) };
+export const BIOME_BY_ID = Object.fromEntries(BIOMES.map(b => [b.id, b]));
+// Rows of the 3x3 map, north to south.
+export const BIOME_GRID = [
+  ['winter', 'winter', 'darkness'],
+  ['ocean', 'forest', 'darkness'],
+  ['desert', 'desert', 'volcano'],
+];
+export const BIOME_CELL = WORLD.w / 3;
+const cellOf = v => Math.max(0, Math.min(2, Math.floor(v / BIOME_CELL)));
+export function biomeAt(x, y) { return BIOME_BY_ID[BIOME_GRID[cellOf(y)][cellOf(x)]]; }
+/** The squares { x, y, w, h } that make up a biome. */
+export function biomeCells(id) {
+  const out = [];
+  BIOME_GRID.forEach((row, j) => row.forEach((b, i) => { if (b === id) out.push({ x: i * BIOME_CELL, y: j * BIOME_CELL, w: BIOME_CELL, h: BIOME_CELL }); }));
+  return out;
 }
 
 // Resource node kinds. `yields` maps gather to a resource; `per` multiplies
 // the weapon's harvest for that node; `hurts` is contact damage per tick.
+// Sizes follow the reference footage: trees about 3.5 tamer widths across,
+// rocks about two (often a big and a small one together), bushes a little
+// over one.
 export const RESOURCE_TYPES = {
-  tree: { yields: 'wood', r: [70, 100] },
-  rock: { yields: 'stone', r: [48, 66] },
-  bush: { yields: 'food', r: [36, 44] },
-  gold: { yields: 'gold', r: [42, 52] },
+  tree: { yields: 'wood', r: [105, 128] },
+  rock: { yields: 'stone', r: [52, 74] },
+  bush: { yields: 'food', r: [40, 50] },
+  gold: { yields: 'gold', r: [56, 66] },
   log: { yields: 'wood', r: [40, 46], per: 4 },
   cactus: { yields: 'food', r: [32, 38], hurts: 2 },
   'big-gold': { yields: 'gold', r: [110, 110], per: 3.5 },
 };
-export const RESOURCE_MIX = { count: 420, mix: [['tree', .4], ['rock', .26], ['bush', .2], ['gold', .05], ['log', .05], ['cactus', .04]] };
+// Nodes per biome square: a few trees, rocks and bushes on every screen.
+export const NODES_PER_CELL = 64;
 
 // ---------------- items ----------------
 
@@ -182,7 +201,9 @@ BUILDINGS.push(
 export const ITEMS = [...PRIMARY, ...SECONDARY, ...TOOLS, ...FOODS, ...BUILDINGS];
 export const ITEM_BY_ID = new Map(ITEMS.map(item => [item.id, item]));
 export const STARTING_ITEMS = ['hand', 'apple', 'wood-wall', 'wood-door', 'wood-spike', 'wood-windmill'];
-export const START_RESOURCES = { food: 20, wood: 20, stone: 20, gold: 0 };
+export const START_RESOURCES = { food: 60, wood: 60, stone: 60, gold: 0 };
+/** Food spent on every taming try, win or lose. */
+export const TAME_FOOD = 12;
 export const SLOT_ORDER = ['primary', 'secondary', 'tool', 'food', 'wall', 'door', 'spike', 'windmill', 'turret', 'tower', 'boost', 'trap', 'heal'];
 export const BUILD_LIMIT = 105;
 
@@ -297,8 +318,8 @@ export const SKILLS = {
 
 // hp, bite and speed are [baby, adult, boss]. tame is base percent.
 // temper: passive (never attacks), coward (flees when hurt), neutral (fights back), aggressive (hunts players).
-const pet = (id, name, season, body, color, accent, types, rarity, tame, tool, temper, hp, bite, speed, skill, extra = {}) =>
-  ({ id, name, season, body, color, accent, types, rarity, tame, tool, temper, hp, bite, speed, skill, ...extra });
+const pet = (id, name, biome, body, color, accent, types, rarity, tame, tool, temper, hp, bite, speed, skill, extra = {}) =>
+  ({ id, name, biome, body, color, accent, types, rarity, tame, tool, temper, hp, bite, speed, skill, ...extra });
 
 export const PETS = [
   // forest: the three starters have high tame chances
@@ -351,15 +372,15 @@ export const PET_STAGE = ['Baby', 'Adult', 'Boss'];
 export const PET_XP = [500, 2500];
 export const MAX_PETS = 3;
 
-// Stationary bosses, one per season. Killing one pays big gold and drops
-// three legendary babies from that season.
+// Stationary bosses, one per biome. They sleep until someone attacks them;
+// a kill pays everyone who helped and drops three sleeping babies from that biome.
 export const BOSSES = [
-  { id: 'old-oak', name: 'Old Oak', season: 'forest', body: 'treant', color: '#6b4a2b', accent: '#97cf3a', hp: 8000, dmg: 60, reach: 230, every: 1.6, gold: 5000, xp: 4000, minions: 'wolf' },
-  { id: 'frost-golem', name: 'Frost Golem', season: 'winter', body: 'golem', color: '#9fe3f5', accent: '#e9fbff', hp: 9000, dmg: 55, reach: 220, every: 1.8, gold: 5000, xp: 4500, minions: 'arctic-fox' },
-  { id: 'shade-cap', name: 'Shade Cap', season: 'darkness', body: 'mushroom', color: '#7a5fd0', accent: '#7dfcd2', hp: 8000, dmg: 50, reach: 220, every: 1.4, gold: 5000, xp: 4000, minions: 'spider' },
-  { id: 'sand-colossus', name: 'Sand Colossus', season: 'desert', body: 'golem', color: '#c69a5c', accent: '#f0d090', hp: 9500, dmg: 60, reach: 230, every: 1.8, gold: 5500, xp: 4500, minions: 'scorpion' },
-  { id: 'deep-kraken', name: 'Deep Kraken', season: 'ocean', body: 'kraken', color: '#b0477a', accent: '#ff9ac9', hp: 9000, dmg: 55, reach: 260, every: 1.6, gold: 5500, xp: 4500, minions: 'crab' },
-  { id: 'magma-titan', name: 'Magma Titan', season: 'volcano', body: 'golem', color: '#5c3b33', accent: '#ff7b2e', hp: 10000, dmg: 65, reach: 230, every: 1.8, gold: 6000, xp: 5000, minions: 'salamander' },
+  { id: 'old-oak', name: 'Old Oak', biome: 'forest', body: 'treant', color: '#6b4a2b', accent: '#97cf3a', hp: 8000, dmg: 60, reach: 230, every: 1.6, gold: 5000, xp: 4000, minions: 'wolf' },
+  { id: 'frost-golem', name: 'Frost Golem', biome: 'winter', body: 'golem', color: '#9fe3f5', accent: '#e9fbff', hp: 9000, dmg: 55, reach: 220, every: 1.8, gold: 5000, xp: 4500, minions: 'arctic-fox' },
+  { id: 'shade-cap', name: 'Shade Cap', biome: 'darkness', body: 'mushroom', color: '#7a5fd0', accent: '#7dfcd2', hp: 8000, dmg: 50, reach: 220, every: 1.4, gold: 5000, xp: 4000, minions: 'spider' },
+  { id: 'sand-colossus', name: 'Sand Colossus', biome: 'desert', body: 'golem', color: '#c69a5c', accent: '#f0d090', hp: 9500, dmg: 60, reach: 230, every: 1.8, gold: 5500, xp: 4500, minions: 'scorpion' },
+  { id: 'deep-kraken', name: 'Deep Kraken', biome: 'ocean', body: 'kraken', color: '#b0477a', accent: '#ff9ac9', hp: 9000, dmg: 55, reach: 260, every: 1.6, gold: 5500, xp: 4500, minions: 'crab' },
+  { id: 'magma-titan', name: 'Magma Titan', biome: 'volcano', body: 'golem', color: '#5c3b33', accent: '#ff7b2e', hp: 10000, dmg: 65, reach: 230, every: 1.8, gold: 6000, xp: 5000, minions: 'salamander' },
 ];
 export const BOSS_BY_ID = new Map(BOSSES.map(b => [b.id, b]));
 

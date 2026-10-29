@@ -19,7 +19,6 @@ function run({ latency, jitter, phase, seed = 99 }) {
   world.animals = [];
 
   const predictor = new Predictor(), mirror = { grid: null, structures: [] };
-  let sk = null;
   // east into the wall, stop, north, diagonal, west
   const schedule = t => t < 1800 ? { mx: 1, my: 0 } : t < 2300 ? { mx: 0, my: 0 } : t < 3300 ? { mx: 0, my: -1 } : t < 4300 ? { mx: 1, my: 1 } : { mx: -1, my: 0 };
   let random = seed;
@@ -33,7 +32,7 @@ function run({ latency, jitter, phase, seed = 99 }) {
       const snap = toClient.shift().snap, mine = snap.p.map(S.decodePlayer).find(p => p.id === 'me');
       mirror.structures = snap.s.map(S.decodeStructure);
       // the client builds the resource grid from the seed, as game.js does
-      if (snap.sk !== sk) { sk = snap.sk; mirror.grid = S.generateResources(seed, sk); }
+      mirror.grid ??= S.generateResources(seed);
       const before = predictor.position(.5);
       predictor.reconcile(mirror, { id: 'me', r: mine.r, x: mine.x, y: mine.y, seq: snap.me.seq, v: snap.me.v, spd: snap.me.spd });
       const after = predictor.position(.5);

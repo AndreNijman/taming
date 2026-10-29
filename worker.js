@@ -8,7 +8,7 @@ import { verifyDevPass } from './netdev.js';
 const ROOM_TTL = 45 * 60_000, LB_MS = 1000;
 const ADOPT_WAIT_MS = 6000, MOVE_CLOSE_MS = 1000; // a moved room waits this long for its players; the old one closes their sockets after this
 const COMMANDS = new Set(['choose', 'tame', 'eat', 'respawn', 'skill', 'pets', 'hat', 'release']);
-const GLOBAL_EVENTS = new Set(['season', 'bossup', 'boss', 'death']);
+const GLOBAL_EVENTS = new Set(['boss', 'death']);
 const DEV_HOST = 'wildbound.andrenijman.com'; // dev passes (netdev.js) are only valid for this host
 const encoder = new TextEncoder();
 
