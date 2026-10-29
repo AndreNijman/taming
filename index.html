@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20261029-1">
+  <link rel="stylesheet" href="style.css?v=20261029-2">
   <!-- one version bump busts every module while keeping each a singleton -->
   <script type="importmap">
-    { "imports": { "./data.js": "./data.js?v=20261029-1", "./sim.js": "./sim.js?v=20261029-1", "./render.js": "./render.js?v=20261029-1" } }
+    { "imports": { "./data.js": "./data.js?v=20261029-2", "./sim.js": "./sim.js?v=20261029-2", "./render.js": "./render.js?v=20261029-2", "./netping.js": "./netping.js?v=20261029-2", "./netprobe.js": "./netprobe.js?v=20261029-2", "./netdev.js": "./netdev.js?v=20261029-2" } }
   </script>
 </head>
 <body>
@@ -93,7 +93,7 @@
       <header class="screen-head"><button id="leave-lobby" class="back" aria-label="Leave lobby">←</button><div><span>Waiting room</span><h2 id="lobby-name">Lobby</h2></div></header>
       <div class="lobby-sheet card">
         <div><h3>Tamers</h3><div id="roster" class="roster"></div></div>
-        <div class="lobby-rules"><h3>Rules</h3><p>One shared world, seasons change for everyone</p><p>Player fights are on</p><p id="lobby-cpu"></p></div>
+        <div class="lobby-rules"><h3>Rules</h3><p>One shared world, seasons change for everyone</p><p>Player fights are on</p><p id="lobby-cpu"></p><p id="lobby-region"></p></div>
       </div>
       <button id="start-match" class="primary big start-button">Start</button>
       <p id="lobby-wait" class="muted">Only the lobby creator can start.</p>
@@ -116,6 +116,7 @@
           <button id="map-button" class="hud-icon" aria-label="Map (M)" title="Map (M)"><svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/></svg></button>
           <button id="menu-button" class="hud-icon" aria-label="Menu (Esc)" title="Menu (Esc)"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
         </div>
+        <div id="ping" class="ping hidden" title="Your ping to the world"></div>
         <div id="leaderboard" class="leaderboard"></div>
       </div>
       <div class="hud-bl">
@@ -156,6 +157,6 @@
     </section>
     <div id="toast" role="status" aria-live="polite"></div>
   </main>
-  <script type="module" src="game.js?v=20261029-1"></script>
+  <script type="module" src="game.js?v=20261029-2"></script>
 </body>
 </html>

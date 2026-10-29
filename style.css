@@ -136,7 +136,12 @@ h1, h2, h3, h4 { margin: 0; line-height: 1.1; font-weight: 800; }
 .hud-bl { left: 12px; bottom: 12px; align-items: flex-start; }
 .hud-bc { left: 50%; bottom: 10px; transform: translateX(-50%); align-items: center; gap: 6px; }
 .hud-br { right: 12px; bottom: 12px; align-items: flex-end; }
-.glass, .leaderboard, .pet, .season-chip, .boss-bar, .feed p, .chat p, .flags span, #minimap { background: var(--glass); border-radius: 12px; }
+.glass, .leaderboard, .pet, .season-chip, .boss-bar, .feed p, .chat p, .flags span, #minimap, .ping { background: var(--glass); border-radius: 12px; }
+/* live ping under the menu buttons: neutral, then warning from 120 ms, bad from 200 ms */
+.ping { padding: 1px 10px; font-size: .85rem; }
+.ping[data-level=warn] { color: #f2c230; }
+.ping[data-level=bad] { color: #ff7a66; }
+.lobby-where { font-weight: 600; }
 #hud :is(b, h3, small, span, em, p) { text-shadow: var(--outline); }
 
 .pet-panel { display: flex; flex-direction: column; gap: 6px; }

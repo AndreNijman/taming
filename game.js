@@ -7,6 +7,9 @@ import {
 } from './data.js';
 import * as S from './sim.js';
 import * as R from './render.js';
+import { NetPing } from './netping.js';
+import { probeRegions, pingUrl, regionLabel } from './netprobe.js';
+import { devPass, joinCode, clearJoinCode, setPlayer, showDevJoined } from './netdev.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -18,7 +21,7 @@ const RES_COLORS = { wood: '#b9824a', stone: '#9aa1a6', food: '#e2413b', gold: '
 const isLocalHost = ['localhost', '127.0.0.1'].includes(location.hostname);
 
 const game = {
-  mode: null, ws: null, room: '', id: null, host: false, running: false, paused: false, dead: false,
+  mode: null, ws: null, pinger: null, pingAt: 0, room: '', password: '', shard: '', probes: null, roomPings: new Map(), id: null, host: false, running: false, paused: false, dead: false,
   seed: 0, sk: -1, grid: null, local: null, acc: 0, alpha: 1,
   prev: null, cur: null, snapAt: 0, snapGap: 50, lb: [], lastSendAt: 0,
   keys: new Set(), pointer: { x: innerWidth / 2, y: innerHeight / 2, down: false }, touch: { mx: 0, my: 0, attack: false },
@@ -51,6 +54,8 @@ function playerName() {
 }
 function stored(key, fallback) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } }
 $('player-name').value = stored('wildbound-name', '');
+setPlayer(playerName(), '');
+$('player-name').addEventListener('change', () => setPlayer(playerName(), game.mode === 'online' && game.id ? game.room : ''));
 let skin = clamp(+stored('wildbound-skin', 0) || 0, 0, R.FURS.length - 1);
 function renderSkins() {
   const box = $('skins'); box.replaceChildren();
@@ -92,7 +97,7 @@ function relayBase() {
 
 $('how-button').onclick = () => { $('how').classList.remove('hidden'); $('how-button').setAttribute('aria-expanded', 'true'); };
 $('close-how').onclick = () => { $('how').classList.add('hidden'); $('how-button').setAttribute('aria-expanded', 'false'); };
-$('open-online').onclick = () => { show('online'); refreshLobbies(); };
+$('open-online').onclick = () => { show('online'); refreshLobbies(); probeRegions().then(ms => { game.probes = ms; sendRegions(); }); };
 document.querySelectorAll('[data-back="landing"]').forEach(button => button.onclick = () => show('landing'));
 $('refresh').onclick = refreshLobbies;
 $('play-cpu').onclick = () => startLocal(playerName());
@@ -152,11 +157,24 @@ function renderLobbies(lobbies) {
     const info = document.createElement('div');
     const title = document.createElement('h4'); title.textContent = room.name;
     const meta = document.createElement('p'); meta.textContent = `${room.players}/${room.max} tamers · ${room.locked ? 'locked' : 'open'}`;
+    const where = document.createElement('span'); where.className = 'lobby-where'; meta.append(where);
+    roomPing(room.name).then(label => { if (label) where.textContent = ` · ${label}`; });
     info.append(title, meta);
     const join = document.createElement('button'); join.className = 'secondary'; join.textContent = 'Join';
     join.onclick = () => { $('join-name').value = room.name; connect('join', room.name, $('join-password').value); };
     row.append(info, join); list.append(row);
   }
+}
+// The room's region and this player's ms to it ("Asia · 120 ms") from the relay's /ping, timed at most every 30 s per room.
+function roomPing(name, shard = '') {
+  const key = `${name.toLowerCase()}~${shard}`, url = `${relayBase()}/ping?room=${encodeURIComponent(name)}${shard ? `&shard=${encodeURIComponent(shard)}` : ''}`;
+  let entry = game.roomPings.get(key);
+  if (!entry || performance.now() - entry.at > 30000) {
+    const region = entry?.region || fetch(url, { cache: 'no-store' }).then(response => response.json()).then(body => body.region || '').catch(() => '');
+    entry = { at: performance.now(), region, label: Promise.all([region, pingUrl(url)]).then(([where, ms]) => where ? regionLabel(where, ms) : '') };
+    game.roomPings.set(key, entry);
+  }
+  return entry.label;
 }
 $('create-form').onsubmit = event => {
   event.preventDefault();
@@ -164,29 +182,51 @@ $('create-form').onsubmit = event => {
 };
 $('join-form').onsubmit = event => { event.preventDefault(); connect('join', $('join-name').value, $('join-password').value); };
 
-function connect(action, roomName, password = '', settings = {}) {
+// `moved` is the relay's { shard, ticket } when the room moved to a fairer region at start (the ticket keeps this seat).
+function connect(action, roomName, password = '', settings = {}, moved = null) {
   const room = roomName.trim().replace(/[^a-z0-9 _-]/gi, '').replace(/\s+/g, ' ').slice(0, 24);
   if (room.length < 3) { $('online-error').textContent = 'Lobby names need at least 3 characters.'; return; }
   $('online-error').textContent = 'Connecting...';
   const url = new URL(`${relayBase().replace(/^http/, 'ws')}/ws`); url.searchParams.set('room', room);
-  const ws = new WebSocket(url);
+  if (moved?.shard) url.searchParams.set('shard', moved.shard);
+  if (moved?.ticket) url.searchParams.set('ticket', moved.ticket);
+  // A dev's games-guard pass rides along on every create and join, the shard's after a move too; null for everyone else.
+  const dev = devPass(), ws = new WebSocket(url), pinger = new NetPing();
   const timer = setTimeout(() => ws.close(), 10000);
-  ws.onopen = () => { clearTimeout(timer); ws.send(JSON.stringify({ t: action, room, password, name: playerName(), skin, settings })); };
-  ws.onmessage = event => handleMessage(JSON.parse(event.data));
+  ws.onopen = async () => { const pass = (await dev)?.pass; if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: action, room, password, name: playerName(), skin, settings, dev: pass })); };
+  ws.onmessage = event => { if (game.ws !== ws) return; const m = JSON.parse(event.data); if (m.t === 'welcome') clearTimeout(timer); handleMessage(m); };
   ws.onerror = () => { $('online-error').textContent = 'Could not reach the multiplayer relay.'; };
   ws.onclose = () => {
     clearTimeout(timer);
+    pinger.stop(); if (game.pinger === pinger) game.pinger = null;
     if (game.ws === ws && game.running) leaveGame('Connection to the world was lost.');
-    else if (!game.id) $('online-error').textContent = 'The lobby connection closed.';
+    else if (game.ws === ws && moved && game.id) leaveGame('The world could not be moved. Connection lost.');
+    else if (game.ws === ws && !game.id) $('online-error').textContent = 'The lobby connection closed.';
   };
-  game.ws = ws; game.mode = 'online'; game.room = room;
+  game.ws = ws; game.pinger = pinger; game.mode = 'online'; game.room = room; game.password = password; game.shard = moved?.shard || '';
+}
+// The relay moved this room to a fairer region at match start: reconnect there, keeping the lobby on screen.
+function moveRoom(m) {
+  const text = `Moving to ${regionLabel(m.region) || 'a fairer region'}...`;
+  toast(text); $('lobby-wait').textContent = text; $('online-error').textContent = text;
+  connect('join', game.room, game.password, {}, { shard: m.shard, ticket: m.ticket });
+}
+function sendRegions() { if (game.probes && game.id) send({ t: 'regions', ms: game.probes }); }
+// About once a second while connected, lobby included, for the lag log and the HUD's ping chip.
+function sendPing(now) {
+  if (game.mode !== 'online' || !game.pinger || !game.id || now - game.pingAt < 1000) return;
+  game.pingAt = now; send({ t: 'ping', ...game.pinger.next() });
 }
 function send(message) { if (game.ws?.readyState === WebSocket.OPEN) game.ws.send(JSON.stringify(message)); }
 
 function handleMessage(m) {
   switch (m.t) {
     case 'error': $('online-error').textContent = m.message; $('lobby-wait').textContent = m.message; break;
-    case 'welcome': game.id = m.id; game.host = m.host; $('online-error').textContent = ''; break;
+    case 'welcome': game.id = m.id; game.host = m.host; $('online-error').textContent = ''; setPlayer(playerName(), game.room); sendRegions(); break;
+    case 'pong': game.pinger?.pong(m.c); break;
+    case 'move': moveRoom(m); break;
+    case 'dev-joined': showDevJoined(m.name); break;
+    case 'event': addFeed(m.message); break;
     case 'lobby': renderLobby(m); break;
     case 'start': game.id = m.you || game.id; beginGame(m.seed); break;
     case 's': {
@@ -212,6 +252,8 @@ function renderLobby(message) {
     row.append(dot, name, role); roster.append(row);
   }
   $('lobby-cpu').textContent = `${message.settings.bots} CPU tamers will join`;
+  const room = game.room, shard = game.shard;
+  roomPing(room, shard).then(label => { if (game.room === room && game.shard === shard) $('lobby-region').textContent = label ? `Region · ${label}` : ''; });
   $('start-match').classList.toggle('hidden', !game.host); $('lobby-wait').classList.toggle('hidden', game.host);
 }
 $('start-match').onclick = () => send({ t: 'start' });
@@ -223,7 +265,7 @@ function startLocal(name) {
   const world = S.createWorld(Date.now() & 0x7fffffff);
   S.addPlayer(world, { id: 'me', name, skin });
   S.fillBots(world, 9);
-  game.mode = 'local'; game.local = world; game.id = 'me'; game.host = true;
+  game.mode = 'local'; game.local = world; game.id = 'me'; game.host = true; setPlayer(name, '');
   beginGame(world.seed);
   pushSnap(decodeSnap(S.snapshot(world, 'me')));
   game.lb = S.leaderboard(world);
@@ -250,7 +292,7 @@ function leaveGame(message = '') {
   document.body.classList.remove('playing');
   $('hud').classList.add('hidden');
   for (const id of ['pause', 'death', 'world-map', 'field-shop']) $(id).classList.add('hidden');
-  show('landing');
+  show('landing'); setPlayer(playerName(), '');
   if (message) toast(message);
 }
 
@@ -645,6 +687,12 @@ function changed(key, value) {
 function updateHud(now) {
   const view = game.view, me = view.me, data = myData();
   if (!data || !me) return;
+  // live ping, neutral, then warning from 120 ms and bad from 200 ms
+  const rtt = game.mode === 'online' && game.pinger ? game.pinger.rtt : -1, ping = $('ping');
+  if (changed('ping', Math.round(rtt))) {
+    ping.classList.toggle('hidden', rtt < 0);
+    if (rtt >= 0) { ping.textContent = `${Math.round(rtt)} ms`; ping.dataset.level = rtt >= 200 ? 'bad' : rtt >= 120 ? 'warn' : ''; }
+  }
   // hotbar
   const sel = selIndex();
   const mineCount = kind => game.cur.structures.filter(s => s.owner === game.id && ITEM_BY_ID.get(s.item)?.kind === kind).length;
@@ -926,6 +974,7 @@ function writeTestHooks(view, drawn) {
   ds.action = game.lastAction;
   ds.hits = game.hits;
   ds.pets = view.meData?.pets.length ?? 0;
+  ds.tamers = game.lb.map(([id, name]) => `${id.startsWith('b') ? 'bot' : 'human'}:${name}`).join(',');
   if (!me && performance.now() - game.startedAt > 3000) ds.renderError = 'missing player'; else delete ds.renderError;
   if (!me) return;
   ds.testPlayer = JSON.stringify({ x: Math.round(me.x), y: Math.round(me.y), hp: me.hp, age: me.age });
@@ -972,6 +1021,7 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(.1, (now - last) / 1000); last = now;
   try {
+    sendPing(now);
     if (game.running && game.cur) {
       updateInput();
       if (game.mode === 'local') { if (!game.paused) stepLocal(dt); }
@@ -989,3 +1039,11 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// A ?join=CODE link (the admin page's) goes straight to the online screen and joins; a dev's pass
+// skips the lobby password, anyone else is asked for it there with the name filled in.
+const deepJoin = joinCode();
+if (deepJoin) {
+  show('online'); $('join-name').value = deepJoin; refreshLobbies(); probeRegions().then(ms => { game.probes = ms; sendRegions(); });
+  connect('join', deepJoin, ''); clearJoinCode();
+}

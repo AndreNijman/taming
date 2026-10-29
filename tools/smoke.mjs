@@ -3,9 +3,10 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const server = spawn('npx', ['serve', '.', '-l', '4173'], { stdio:'ignore' });
+const port = process.env.PORT || '4173';
+const server = spawn('npx', ['serve', '.', '-l', port], { stdio:'ignore' });
 for (let attempt=0;attempt<40;attempt++) {
-  try { if ((await fetch('http://localhost:4173')).ok) break; } catch {}
+  try { if ((await fetch(`http://localhost:${port}`)).ok) break; } catch {}
   if (attempt===39) throw new Error('static server did not become ready');
   await new Promise(resolve => setTimeout(resolve, 250));
 }
@@ -16,7 +17,7 @@ try {
   page.on('console', message => { if(message.type()==='error')errors.push(message.text()) });
   page.on('pageerror', error => errors.push(error.message));
   const hook = async name => page.locator('#game').getAttribute(`data-${name}`);
-  await page.goto('http://localhost:4173', { waitUntil:'networkidle' });
+  await page.goto(`http://localhost:${port}`, { waitUntil:'networkidle' });
   await page.fill('#player-name', 'Smoke');
   await page.click('#open-tamodex');
   await page.locator('.dex-card').nth(7).waitFor();
