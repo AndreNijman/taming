@@ -304,7 +304,9 @@ function buildView() {
   const mix = (map, pmap) => [...map.values()].map(e => {
     const o = pmap.get(e.id);
     if (!o || Math.hypot(o.x - e.x, o.y - e.y) > 300) return e;
-    return { ...e, x: lerp(o.x, e.x, alpha), y: lerp(o.y, e.y, alpha), angle: o.angle + S.angleDiff(o.angle, e.angle) * alpha };
+    const out = { ...e, x: lerp(o.x, e.x, alpha), y: lerp(o.y, e.y, alpha) };
+    if (e.angle !== undefined) out.angle = o.angle + S.angleDiff(o.angle, e.angle) * alpha;
+    return out;
   });
   const players = mix(cur.players, prev.players), animals = mix(cur.animals, prev.animals), projectiles = mix(cur.projectiles, prev.projectiles);
   const me = players.find(p => p.id === game.id) || null;
@@ -426,7 +428,6 @@ function selectSlot(i) {
   const id = myData()?.items[i];
   if (!id) return;
   game.selId = id;
-  if (ITEM_BY_ID.get(id)?.slot !== 'food') game.lastWeapon = id;
 }
 function selIndex() {
   const items = myData()?.items || [];
