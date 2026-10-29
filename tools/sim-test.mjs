@@ -1,7 +1,7 @@
 // Headless checks for the shared simulation: run with `node tools/sim-test.mjs`.
 import assert from 'node:assert/strict';
 import * as S from '../sim.js';
-import { BIOMES, biomeAt, PET_BY_ID, PET_XP, START_RESOURCES, TAME_FOOD, STARTING_ITEMS, xpForAge } from '../data.js';
+import { BIOMES, biomeAt, ITEM_BY_ID, PET_BY_ID, PET_XP, START_RESOURCES, TAME_FOOD, STARTING_ITEMS, xpForAge } from '../data.js';
 
 const finite = world => {
   for (const e of [...Object.values(world.players), ...world.animals]) {
@@ -87,8 +87,10 @@ assert.equal(me.hp, 100);
   assert.ok(Math.hypot(baby.x - me.x, baby.y - me.y) < 250, 'pet should follow its tamer');
 
   // attack order + skill against a wild adult placed next to the pet
-  const foeDef = [...PET_BY_ID.values()].find(d => d.biome === 'forest' && d.id !== baby.species);
+  // a neutral foe stands its ground; everything else nearby dozes so the pet has one target
+  const foeDef = [...PET_BY_ID.values()].find(d => d.biome === 'forest' && d.temper === 'neutral' && d.id !== baby.species);
   const foe = world.animals.find(a => !a.owner && !a.boss && a.species === foeDef.id) || world.animals.find(a => !a.owner && !a.boss && a !== baby);
+  for (const a of world.animals) if (!a.owner && !a.boss && a !== foe && Math.hypot(a.x - baby.x, a.y - baby.y) < 1200) { a.sleep = true; a.wakeAt = world.time + 60; a.target = null; }
   foe.sleep = false; foe.x = baby.x + 70; foe.y = baby.y; foe.hp = foe.maxHp = 5000; foe.stage = 1;
   S.command(world, 'me', { t: 'pets', mode: 'attack' });
   const hpBefore = foe.hp;
@@ -174,6 +176,16 @@ assert.equal(me.hp, 100);
   me.res.gold = 600; me.shieldUntil = 0;
   S.setInput(world, 'me', { mx: 0, my: 0, angle: 0, attack: false, sel: 0 });
   me.res.wood = 100; me.res.stone = 100;
+  // open ground to build on, with the pets parked behind: the nearest spot where a windmill fits east of the tamer
+  {
+    const it = ITEM_BY_ID.get('wood-windmill'), d = me.r + it.r + 4, x0 = me.x, y0 = me.y;
+    const fits = (x, y) => S.placeable(world, x + d, y, it) && S.placeable(world, x, y, { r: me.r + 40, kind: 'windmill' }) && world.animals.every(a => Math.hypot(a.x - x - d, a.y - y) > a.r + it.r + 40);
+    search: for (let ring = 0; ring < 40; ring++) for (let k = 0; k < 16; k++) {
+      const x = x0 + Math.cos(k / 16 * Math.PI * 2) * ring * 120, y = y0 + Math.sin(k / 16 * Math.PI * 2) * ring * 120;
+      if (fits(x, y)) { me.x = x; me.y = y; break search; }
+    }
+    for (const id of me.pets) { const a = world.animals.find(x => x.id === id); if (a) { a.x = me.x - 160; a.y = me.y; } }
+  }
   const mill = me.items.indexOf('wood-windmill');
   S.setInput(world, 'me', { angle: 0, attack: true, sel: mill });
   for (let i = 0; i < 4; i++) S.step(world, S.TICK);

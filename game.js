@@ -767,6 +767,7 @@ function updateHud(now) {
   const need = xpForAge(me.age);
   $('xp-fill').style.width = `${clamp(data.xp / need, 0, 1) * 100}%`;
   if (changed('age', me.age)) $('age-text').textContent = `Age ${me.age}`;
+  $('xp-star').classList.toggle('hidden', !data.choices.length);
   // resources
   const rsig = `${data.res.food}|${data.res.wood}|${data.res.stone}|${data.res.gold}`;
   if (changed('res', rsig)) {
@@ -782,7 +783,7 @@ function updateHud(now) {
     $('age-choice-title').textContent = `Age ${data.choices[0]}: pick one`;
     for (const id of offer) {
       const it = ITEM_BY_ID.get(id);
-      const b = document.createElement('button'); b.className = 'choice';
+      const b = document.createElement('button'); b.className = 'choice'; b.title = `${it.name}: ${describe(it)}`;
       b.innerHTML = `<img src="${iconUrl(id)}" alt=""><b>${escapeHtml(it.name)}</b><small>${escapeHtml(describe(it))}</small>`;
       b.onclick = () => { cmd({ t: 'choose', id }); game.selId = game.selId && ITEM_BY_ID.get(game.selId).slot === it.slot ? id : game.selId; };
       box.append(b);

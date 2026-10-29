@@ -15,37 +15,37 @@ export const BIOMES = [
     id: 'forest', name: 'Forest', ground: '#62813b', decor: '#56732f', pebble: '#7a9a4a', tuft: 'grass',
     tree: ['#97cf3a', '#b5e04f', '#2f4a14'], treeStyle: 'star', rock: ['#a59a87', '#c2b8a6', '#3b3229'],
     bush: ['#4f8a2f', '#66a63c', '#24401a'], berry: '#e2413b', boss: 'old-oak',
-    mix: [['tree', .36], ['rock', .3], ['bush', .22], ['gold', .05], ['log', .07]],
+    mix: [['tree', .42], ['rock', .2], ['bush', .24], ['gold', .06], ['log', .08]],
   },
   {
     id: 'winter', name: 'Winter', ground: '#d6cbbb', decor: '#c7bba9', pebble: '#ece5d9', tuft: 'flake',
     tree: ['#f4f0e6', '#ffffff', '#6d6f6c'], treeStyle: 'snow', rock: ['#a9b6bd', '#cdd8dc', '#3f4a52'],
     bush: ['#7fa3a0', '#a1c3bc', '#30464a'], berry: '#5aa8e6', boss: 'frost-golem',
-    mix: [['tree', .38], ['rock', .32], ['bush', .16], ['gold', .07], ['log', .07]],
+    mix: [['tree', .42], ['rock', .22], ['bush', .2], ['gold', .08], ['log', .08]],
   },
   {
     id: 'darkness', name: 'Darkness', ground: '#393361', decor: '#2f2a52', pebble: '#4e4680', tuft: 'grass',
     tree: ['#7a5fd0', '#9d86ea', '#1a1433'], treeStyle: 'mushroom', rock: ['#5a5778', '#77749a', '#17152a'],
     bush: ['#3d6f7a', '#4f8d99', '#112a30'], berry: '#7dfcd2', dark: true, boss: 'shade-cap',
-    mix: [['tree', .34], ['rock', .3], ['bush', .22], ['gold', .08], ['log', .06]],
+    mix: [['tree', .36], ['rock', .2], ['bush', .28], ['gold', .09], ['log', .07]],
   },
   {
     id: 'desert', name: 'Desert', ground: '#bc8c4a', decor: '#a97a3c', pebble: '#d4a461', tuft: 'swirl',
     tree: ['#d9673b', '#ef8b55', '#4a2414'], treeStyle: 'dead', rock: ['#b9814f', '#d6a06c', '#4a2f1b'],
     bush: ['#8a9a3c', '#a6b752', '#3b4216'], berry: '#e2413b', boss: 'sand-colossus',
-    mix: [['tree', .22], ['rock', .36], ['bush', .1], ['gold', .1], ['cactus', .16], ['log', .06]],
+    mix: [['tree', .26], ['rock', .26], ['bush', .14], ['gold', .11], ['cactus', .17], ['log', .06]],
   },
   {
     id: 'ocean', name: 'Ocean', ground: '#326395', decor: '#3d73a8', pebble: '#4f86bb', tuft: 'wave',
     tree: ['#3f9a6a', '#58b884', '#123425'], treeStyle: 'kelp', rock: ['#3e6f8a', '#5a8eaa', '#1d3646'],
     bush: ['#e8664f', '#ff8a6c', '#4a1a12'], berry: '#ffd2a8', boss: 'deep-kraken',
-    mix: [['tree', .34], ['rock', .3], ['bush', .24], ['gold', .06], ['log', .06]],
+    mix: [['tree', .38], ['rock', .2], ['bush', .28], ['gold', .07], ['log', .07]],
   },
   {
     id: 'volcano', name: 'Volcano', ground: '#4f3335', decor: '#432a2c', pebble: '#ff7b2e', tuft: 'crack',
     tree: ['#e0612e', '#ff8b45', '#3a1208'], treeStyle: 'dead', rock: ['#5c4b47', '#7b6762', '#1c1412'],
     bush: ['#7b3b2c', '#9c5038', '#2a120c'], berry: '#ffb02e', meteors: true, boss: 'magma-titan',
-    mix: [['tree', .2], ['rock', .42], ['bush', .12], ['gold', .16], ['log', .1]],
+    mix: [['tree', .26], ['rock', .3], ['bush', .16], ['gold', .17], ['log', .11]],
   },
 ];
 export const BIOME_BY_ID = Object.fromEntries(BIOMES.map(b => [b.id, b]));
@@ -80,7 +80,7 @@ export const RESOURCE_TYPES = {
   'big-gold': { yields: 'gold', r: [110, 110], per: 3.5 },
 };
 // Nodes per biome square: a few trees, rocks and bushes on every screen.
-export const NODES_PER_CELL = 64;
+export const NODES_PER_CELL = 56;
 
 // ---------------- items ----------------
 

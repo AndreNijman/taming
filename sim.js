@@ -59,7 +59,8 @@ export function generateResources(seed) {
       const type = pick(biome.mix);
       const [r0, r1] = RESOURCE_TYPES[type].r, r = Math.round(r0 + random() * (r1 - r0));
       if (!fits(x, y, r)) continue;
-      const n = { id: `r${list.length}`, type, x: Math.round(x), y: Math.round(y), r, biome: id };
+      // floor, not round: a node drawn at 6399.6 must not land on the next biome's first row
+      const n = { id: `r${list.length}`, type, x: Math.floor(x), y: Math.floor(y), r, biome: id };
       list.push(n); add(n); placed++;
       if (type === 'rock' && random() < .45) {
         const a = random() * Math.PI * 2, r2 = Math.round(r * (.55 + random() * .15)), d = r + r2 + 8;
