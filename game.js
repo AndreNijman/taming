@@ -8,6 +8,7 @@ import {
 import * as S from './sim.js';
 import * as R from './render.js';
 import { NetPing } from './netping.js';
+import { Predictor } from './predict.js';
 import { probeRegions, pingUrl, regionLabel } from './netprobe.js';
 import { devPass, joinCode, clearJoinCode, setPlayer, showDevJoined } from './netdev.js';
 
@@ -19,17 +20,19 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const RES_COLORS = { wood: '#b9824a', stone: '#9aa1a6', food: '#e2413b', gold: '#f2c230' };
 const isLocalHost = ['localhost', '127.0.0.1'].includes(location.hostname);
+// ?smooth=0 draws the server's own position for this player's tamer, for comparing against prediction
+const PREDICT = new URLSearchParams(location.search).get('smooth') !== '0';
 
 const game = {
   mode: null, ws: null, pinger: null, pingAt: 0, room: '', password: '', shard: '', probes: null, roomPings: new Map(), id: null, host: false, running: false, paused: false, dead: false,
   seed: 0, sk: -1, grid: null, local: null, acc: 0, alpha: 1,
-  prev: null, cur: null, snapAt: 0, snapGap: 50, lb: [], lastSendAt: 0,
+  prev: null, cur: null, snapAt: 0, snapGap: 50, lb: [],
   keys: new Set(), pointer: { x: innerWidth / 2, y: innerHeight / 2, down: false }, touch: { mx: 0, my: 0, attack: false },
   camera: { x: CENTER.x, y: CENTER.y }, zoom: 1, input: { mx: 0, my: 0, angle: 0, attack: false, sel: 0 },
   selId: null, auto: false, lock: false, petMode: 'defend',
   floaters: [], particles: [], shake: 0, nodeHits: new Map(), bubbles: new Map(), marker: null,
   feed: [], lastAction: '', hits: 0, startedAt: 0, overlay: null, dexSeason: 'forest', toastTimer: null, bannerTimer: null,
-  sig: {}, view: null,
+  sig: {}, view: null, predictor: new Predictor(), netAcc: 0, predAlpha: 0,
 };
 if (isLocalHost) window.wildbound = { game, S };
 
@@ -234,6 +237,7 @@ function handleMessage(m) {
       if (game.snapAt) game.snapGap = lerp(game.snapGap, clamp(now - game.snapAt, 20, 250), .2);
       game.snapAt = now;
       pushSnap(decodeSnap(m));
+      reconcileOwn();
       handleEvents(m.ev || []);
       break;
     }
@@ -275,9 +279,9 @@ function beginGame(seed) {
   Object.assign(game, {
     seed, sk: -1, grid: null, prev: null, cur: null, acc: 0, alpha: 1, running: true, paused: false, dead: false,
     floaters: [], particles: [], shake: 0, feed: [], selId: null, auto: false, lock: false, petMode: 'defend', lastAction: '',
-    hits: 0, startedAt: performance.now(), snapAt: 0, sig: {}, marker: null,
+    hits: 0, startedAt: performance.now(), snapAt: 0, sig: {}, marker: null, netAcc: 0, predAlpha: 0,
   });
-  game.nodeHits.clear(); game.bubbles.clear();
+  game.nodeHits.clear(); game.bubbles.clear(); game.predictor.reset();
   document.body.classList.add('playing');
   document.querySelectorAll('.screen').forEach(el => el.classList.add('hidden'));
   $('hud').classList.remove('hidden');
@@ -322,6 +326,22 @@ function pushSnap(snap) {
     game.nodeHits.clear();
   }
 }
+// Online, this player's tamer moves at once by the sim's own movement step (predict.js); the
+// relay's snapshots correct it. The mirror is what the client knows to collide with.
+const mirror = () => ({ grid: game.grid, structures: game.cur?.structures || [] });
+function sendInputs(dt) {
+  game.netAcc = Math.min(game.netAcc + dt, S.TICK * 4);
+  while (game.netAcc >= S.TICK) {
+    game.netAcc -= S.TICK;
+    send({ t: 'input', ...game.predictor.input(game.input, mirror()) });
+  }
+  game.predAlpha = game.netAcc / S.TICK;
+}
+function reconcileOwn() {
+  const me = game.cur.players.get(game.id), data = game.cur.me;
+  if (!PREDICT || !me || me.dead || !data?.v || !game.grid) { game.predictor.drop(); return; }
+  game.predictor.reconcile(mirror(), { id: game.id, r: me.r, x: me.x, y: me.y, seq: data.seq, v: data.v, spd: data.spd });
+}
 function stepLocal(dt) {
   const world = game.local;
   game.acc += dt;
@@ -352,8 +372,12 @@ function buildView() {
   });
   const players = mix(cur.players, prev.players), animals = mix(cur.animals, prev.animals), projectiles = mix(cur.projectiles, prev.projectiles);
   const me = players.find(p => p.id === game.id) || null;
-  // our own facing follows the mouse immediately rather than the server echo
-  if (me && !me.dead) me.angle = game.input.angle;
+  // our own facing follows the mouse immediately rather than the server echo, and online our position is predicted
+  if (me && !me.dead) {
+    me.angle = game.input.angle;
+    const guess = game.mode === 'online' && game.predictor.position(game.predAlpha);
+    if (guess) { me.x = guess.x; me.y = guess.y; }
+  }
   return { t, players, animals, projectiles, me, structures: cur.structures, hazards: cur.hazards, meData: cur.me };
 }
 
@@ -1027,7 +1051,7 @@ function frame(now) {
       if (game.mode === 'local') { if (!game.paused) stepLocal(dt); }
       else {
         game.alpha = clamp((now - game.snapAt) / game.snapGap, 0, 1);
-        if (now - game.lastSendAt >= 50) { game.lastSendAt = now; send({ t: 'input', ...game.input }); }
+        sendInputs(dt); game.predictor.settle(dt);
       }
       drawWorld(now, dt);
       updateHud(now);

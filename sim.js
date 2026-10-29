@@ -190,6 +190,8 @@ export function setInput(world, id, input) {
     angle: Number.isFinite(+input.angle) ? +input.angle : p.angle,
     attack: !!input.attack, sel: clamp(Math.floor(+input.sel || 0), 0, 15),
   };
+  // the latest input's number; snapshots echo it so a predicting client knows which inputs are in
+  if (Number.isInteger(input.seq)) p.seq = input.seq;
 }
 
 export function command(world, id, cmd) {
@@ -342,9 +344,10 @@ function solidAt(world, x, y, r) {
   return false;
 }
 
-function collide(world, e) {
+// `harmless` is for client prediction, which moves like the server but never deals damage
+function collide(world, e, harmless = false) {
   for (const n of nearbyResources(world, e.x, e.y, e.r + 140)) {
-    const before = n.type === 'cactus' && (e.x - n.x) ** 2 + (e.y - n.y) ** 2 < (n.r + e.r + 4) ** 2;
+    const before = !harmless && n.type === 'cactus' && (e.x - n.x) ** 2 + (e.y - n.y) ** 2 < (n.r + e.r + 4) ** 2;
     pushOut(e, n, n.r);
     if (before && world.tick % 2 === 0 && !e.dead) hurt(world, e, RESOURCE_TYPES.cactus.hurts, null, { kind: 'thorns', kb: 0 });
   }
@@ -615,6 +618,17 @@ function moveSpeed(world, p, it) {
   return s;
 }
 
+// One tick of a tamer's movement. The client runs the same step for its own tamer (prediction),
+// against a mirror world of the resource grid and the structures it can see.
+export function moveTamer(world, p, inp, speed, dt, harmless = false) {
+  let mx = inp.mx, my = inp.my;
+  const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
+  const accel = 1 - Math.exp(-dt * 10);
+  p.vx += (mx * speed - p.vx) * accel; p.vy += (my * speed - p.vy) * accel;
+  p.x += p.vx * dt; p.y += p.vy * dt;
+  collide(world, p, harmless);
+}
+
 function updatePlayer(world, p, dt) {
   if (p.dead) {
     if (p.bot && world.time - p.deadAt > 4) spawnPlayer(world, p);
@@ -627,13 +641,7 @@ function updatePlayer(world, p, dt) {
   // food eaten from a hotkey stays in hand for a moment, otherwise hold the selected item
   if (item(p.held)?.slot !== 'food' || world.time - p.actionAt > .35) p.held = it.id;
   p.angle = inp.angle;
-  let mx = inp.mx, my = inp.my;
-  const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
-  const speed = moveSpeed(world, p, it);
-  const accel = 1 - Math.exp(-dt * 10);
-  p.vx += (mx * speed - p.vx) * accel; p.vy += (my * speed - p.vy) * accel;
-  p.x += p.vx * dt; p.y += p.vy * dt;
-  collide(world, p);
+  moveTamer(world, p, inp, moveSpeed(world, p, it), dt);
   // status effects tick every 0.5s
   if (world.tick % 10 === 0) {
     if (p.poison > 0) hurt(world, p, 4, null, { kind: 'poison', kb: 0 });
@@ -1094,7 +1102,9 @@ export function snapshot(world, selfId) {
   const c = me || { x: CENTER.x, y: CENTER.y };
   return {
     t: 'snap', time: T(world.time), sk: world.seasonKey,
-    me: me ? { xp: Math.floor(me.xp), res: { wood: me.res.wood, stone: me.res.stone, food: me.res.food, gold: me.res.gold }, items: me.items, sel: me.sel, choices: me.choices, hats: me.hats, pets: me.pets, kills: me.kills, cd: T(me.cd), fx: [me.poison > 0, me.burn > 0, me.slowUntil > world.time, me.armorUntil > world.time, me.hasteUntil > world.time], lastHitBy: me.lastHitBy } : null,
+    me: me ? { xp: Math.floor(me.xp), res: { wood: me.res.wood, stone: me.res.stone, food: me.res.food, gold: me.res.gold }, items: me.items, sel: me.sel, choices: me.choices, hats: me.hats, pets: me.pets, kills: me.kills, cd: T(me.cd), fx: [me.poison > 0, me.burn > 0, me.slowUntil > world.time, me.armorUntil > world.time, me.hasteUntil > world.time], lastHitBy: me.lastHitBy,
+      // for prediction: the last input applied, the velocity after it, and the current top speed
+      seq: me.seq || 0, v: [A(me.vx), A(me.vy)], spd: A(moveSpeed(world, me, item(me.items[me.sel]) || item('hand'))) } : null,
     p: Object.values(world.players).filter(p => p.id === selfId || inView(p, c, 200)).map(encodePlayer),
     a: world.animals.filter(a => !a.dead && (a.owner === selfId || inView(a, c, a.r + 100))).map(encodeAnimal),
     s: world.structures.filter(s => inView(s, c, 120)).map(encodeStructure),
