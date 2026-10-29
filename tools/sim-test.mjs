@@ -66,7 +66,7 @@ assert.equal(me.hp, 100);
   assert.ok(me.choices.includes(1), 'age 1 should queue a weapon choice');
   S.command(world, 'me', { t: 'choose', id: 'stone-axe' });
   assert.ok(me.items.includes('stone-axe') && !me.items.includes('hand'), 'choice replaces the primary');
-  assert.equal(xpForAge(0), 40);
+  assert.equal(xpForAge(0), 20);
 }
 
 // taming: guaranteed roll on a sleeping starter, then pets follow, fight, grow and use skills

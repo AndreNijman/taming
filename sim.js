@@ -494,7 +494,9 @@ function killAnimal(world, a, by) {
     return;
   }
   if (killer) {
+    // big wild animals are the early game's paycheque
     gainXp(world, killer, [50, 100, 400][a.stage]);
+    gainGold(killer, [5, 40, 400][a.stage]);
     killer.res.food += [8, 20, 60][a.stage];
   }
   // pets that helped grow from the kill
@@ -536,7 +538,7 @@ function swing(world, p, it) {
     const spec = RESOURCE_TYPES[n.type];
     const amt = Math.max(1, Math.round((it.harvest?.[spec.yields] || 1) * (spec.per || 1) + (bonus[spec.yields] || 0) + (p.hat === 'leaf' && spec.yields === 'wood' ? 1 : 0)));
     if (spec.yields === 'gold') gainGold(p, amt); else p.res[spec.yields] += amt;
-    gainXp(world, p, amt);
+    gainXp(world, p, amt * 2);
     emit(world, { k: 'gather', id: n.id, by: p.id, res: spec.yields, amt, ang: p.angle, x: n.x, y: n.y });
   }
   const dmgMul = p.hat === 'horns' ? 1.1 : 1;

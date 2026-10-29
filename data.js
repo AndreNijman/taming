@@ -209,7 +209,8 @@ export const BUILD_LIMIT = 105;
 
 // ---------------- leveling ----------------
 
-export const xpForAge = age => 40 * (age + 1);
+/** Xp to leave `age`. The first age comes in seconds; after that each age costs a little more, so with kills it stays around half a minute. */
+export const xpForAge = age => age === 0 ? 20 : 60 + 16 * age;
 export const MAX_AGE = 100;
 export const LAST_CHOICE_AGE = 27;
 

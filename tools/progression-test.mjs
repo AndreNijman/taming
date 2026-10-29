@@ -8,8 +8,8 @@ for (const item of ITEMS.filter(item => item.slot === 'primary' || item.slot ===
   assert.ok(!item.cost, `${item.name} is an age unlock, not a recipe`);
 }
 assert.ok(ITEM_BY_ID.get('wood-wall').cost.wood > 0);
-assert.equal(xpForAge(0), 40);
-assert.equal(xpForAge(9), 400);
+assert.equal(xpForAge(0), 20);
+assert.equal(xpForAge(9), 204);
 
 // biomes are fixed squares of the map: forest in the middle, every biome somewhere on the 3x3 grid
 assert.equal(BIOME_CELL * 3, WORLD.w);
