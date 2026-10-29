@@ -1,162 +1,378 @@
-// Shared clean-room game data. This module deliberately has no DOM or Worker globals.
+// Shared clean-room game content. No DOM or Worker globals: imported by the
+// browser client, the shared simulation and the Cloudflare Worker.
+// Mechanics follow publicly documented Taming.io behaviour; all names, art and
+// code here are original.
+
+export const WORLD = { w: 6400, h: 6400 };
+export const CENTER = { x: WORLD.w / 2, y: WORLD.h / 2 };
+
+// ---------------- seasons (server-wide biome cycle) ----------------
+// The whole map changes biome on a timer: forest lasts 16 minutes, every
+// other biome 8. Resources and wild animals reshuffle at each change.
 export const SEASONS = [
-  { id:'forest', name:'Forest', palette:{ background:['#183f35','#245746'], ground:['#467a45','#5f914e'], detail:['#a5ce66','#e4c56a'] }, resources:{ wood:['oak','birch','fallen-log'], stone:['moss-rock','slate'], food:['berry','mushroom'] }, duration:960, ambient:['leaf','fern','firefly'], bossId:'elder-bark' },
-  { id:'winter', name:'Frost / Winter', palette:{ background:['#b8d9df','#dcebed'], ground:['#d5e9e8','#eef6f3'], detail:['#79aeba','#f7fcfa'] }, resources:{ wood:['pine','frost-log'], stone:['ice-rock','granite'], food:['winterberry','root'] }, duration:480, ambient:['snowflake','ice-crystal','cold-mist'], bossId:'rimehorn' },
-  { id:'darkness', name:'Darkness', palette:{ background:['#111329','#201a38'], ground:['#2d2945','#3d3457'], detail:['#7865a9','#62c6ae'] }, resources:{ wood:['night-tree','hollow-stump'], stone:['moonstone','obsidian'], food:['glowcap','shade-fruit'] }, duration:480, ambient:['mote','wisp','shadow-grass'], bossId:'gloam-eye' },
-  { id:'desert', name:'Desert', palette:{ background:['#c06d36','#de9650'], ground:['#d9a45b','#edc57a'], detail:['#8f633f','#f5df9c'] }, resources:{ wood:['dry-palm','thorn-bush'], stone:['sandstone','flint'], food:['cactus-fruit','date'] }, duration:480, ambient:['dust','dry-grass','heat-haze'], bossId:'dune-maw' },
-  { id:'ocean', name:'Ocean', palette:{ background:['#0b5870','#117f8d'], ground:['#2c9a91','#61b9a1'], detail:['#c9e29c','#f0d58a'] }, resources:{ wood:['driftwood','mangrove'], stone:['coral-rock','shell-bed'], food:['kelp','coconut'] }, duration:480, ambient:['bubble','foam','sea-grass'], bossId:'deep-crown' },
-  { id:'volcano', name:'Volcano', palette:{ background:['#371b1b','#54251f'], ground:['#71352a','#914331'], detail:['#ff8a3d','#ffc65a'] }, resources:{ wood:['char-tree','ember-root'], stone:['basalt','sulfur'], food:['fire-fruit','ash-tuber'] }, duration:480, ambient:['ember','ash','steam-vent'], bossId:'caldera-heart' },
+  {
+    id: 'forest', name: 'Forest', duration: 960, ground: '#62813b', decor: '#56732f', pebble: '#7a9a4a', tuft: 'grass',
+    tree: ['#97cf3a', '#b5e04f', '#2f4a14'], treeStyle: 'star', rock: ['#a59a87', '#c2b8a6', '#3b3229'],
+    bush: ['#4f8a2f', '#66a63c', '#24401a'], berry: '#e2413b', boss: 'old-oak',
+  },
+  {
+    id: 'winter', name: 'Winter', duration: 480, ground: '#d6cbbb', decor: '#c7bba9', pebble: '#ece5d9', tuft: 'flake',
+    tree: ['#f4f0e6', '#ffffff', '#6d6f6c'], treeStyle: 'snow', rock: ['#a9b6bd', '#cdd8dc', '#3f4a52'],
+    bush: ['#7fa3a0', '#a1c3bc', '#30464a'], berry: '#5aa8e6', boss: 'frost-golem',
+  },
+  {
+    id: 'darkness', name: 'Darkness', duration: 480, ground: '#393361', decor: '#2f2a52', pebble: '#4e4680', tuft: 'grass',
+    tree: ['#7a5fd0', '#9d86ea', '#1a1433'], treeStyle: 'mushroom', rock: ['#5a5778', '#77749a', '#17152a'],
+    bush: ['#3d6f7a', '#4f8d99', '#112a30'], berry: '#7dfcd2', dark: true, boss: 'shade-cap',
+  },
+  {
+    id: 'desert', name: 'Desert', duration: 480, ground: '#bc8c4a', decor: '#a97a3c', pebble: '#d4a461', tuft: 'swirl',
+    tree: ['#d9673b', '#ef8b55', '#4a2414'], treeStyle: 'dead', rock: ['#b9814f', '#d6a06c', '#4a2f1b'],
+    bush: ['#8a9a3c', '#a6b752', '#3b4216'], berry: '#e2413b', boss: 'sand-colossus',
+  },
+  {
+    id: 'ocean', name: 'Ocean', duration: 480, ground: '#326395', decor: '#3d73a8', pebble: '#4f86bb', tuft: 'wave',
+    tree: ['#3f9a6a', '#58b884', '#123425'], treeStyle: 'kelp', rock: ['#3e6f8a', '#5a8eaa', '#1d3646'],
+    bush: ['#e8664f', '#ff8a6c', '#4a1a12'], berry: '#ffd2a8', boss: 'deep-kraken',
+  },
+  {
+    id: 'volcano', name: 'Volcano', duration: 480, ground: '#4f3335', decor: '#432a2c', pebble: '#ff7b2e', tuft: 'crack',
+    tree: ['#e0612e', '#ff8b45', '#3a1208'], treeStyle: 'dead', rock: ['#5c4b47', '#7b6762', '#1c1412'],
+    bush: ['#7b3b2c', '#9c5038', '#2a120c'], berry: '#ffb02e', meteors: true, boss: 'magma-titan',
+  },
 ];
-
-export const SEASON_TRANSITION_SECONDS=30;
-export function getSeasonTiming(time){
-  const cycle=SEASONS.reduce((sum,season)=>sum+season.duration,0);let position=((time%cycle)+cycle)%cycle,index=0;
-  while(position>=SEASONS[index].duration){position-=SEASONS[index].duration;index++}
-  const transitioning=time>0&&position<SEASON_TRANSITION_SECONDS;
-  return {index,elapsed:position,remaining:SEASONS[index].duration-position,blend:transitioning?position/SEASON_TRANSITION_SECONDS:1,previous:(index+SEASONS.length-1)%SEASONS.length};
+export const SEASON_BY_ID = Object.fromEntries(SEASONS.map(s => [s.id, s]));
+export const CYCLE = SEASONS.reduce((n, s) => n + s.duration, 0);
+export const TRANSITION = 4;
+export function seasonAt(time) {
+  let t = ((time % CYCLE) + CYCLE) % CYCLE, index = 0;
+  while (t >= SEASONS[index].duration) { t -= SEASONS[index].duration; index++; }
+  return { index, season: SEASONS[index], elapsed: t, remaining: SEASONS[index].duration - t, cycle: Math.floor(time / CYCLE) };
 }
 
-const PET_ROWS = [
-  ['moss-pup','Moss Pup','forest','canine','#668c4f','#b4cf74','hound','trail-sense','common',92,14,128],
-  ['bramble-boar','Bramble Boar','forest','boar','#715d3e','#b89458','tusked','root-charge','uncommon',132,18,86],
-  ['canopy-owl','Canopy Owl','forest','bird','#6d7652','#d6c985','winged','keen-sight','common',72,16,146],
-  ['fern-tail','Fern Tail','forest','fox','#9a6743','#6fa75c','long-tail','forage-finder','uncommon',78,15,154],
-  ['barkback','Barkback','forest','turtle','#59623f','#a17a45','shelled','bark-guard','rare',156,13,62],
-  ['honey-paw','Honey Paw','forest','bear','#8a633a','#e5b95d','round','honey-mend','rare',145,19,78],
-  ['reed-hopper','Reed Hopper','forest','rabbit','#8da06b','#e1ddae','long-ear','spring-step','common',65,11,168],
-  ['acorn-stag','Acorn Stag','forest','deer','#875c37','#d2a65f','antlered','grove-aura','epic',118,21,132],
-  ['sap-slink','Sap Slink','forest','lizard','#55925e','#e2c650','low-slung','sticky-snare','uncommon',76,17,142],
-  ['bloom-moth','Bloom Moth','forest','insect','#b97496','#f2d287','four-wing','pollen-cloud','rare',60,20,158],
-
-  ['drift-husky','Drift Husky','winter','canine','#d6e1df','#6e9aaa','hound','snow-dash','common',96,15,134],
-  ['tundra-yak','Tundra Yak','winter','bovine','#6e6259','#e9e0cd','horned','warmth-field','uncommon',158,16,68],
-  ['flake-owl','Flake Owl','winter','bird','#eef4f0','#8eb3bd','winged','frost-gaze','uncommon',70,18,142],
-  ['icewhisker','Icewhisker','winter','cat','#bdd5d8','#587c98','feline','slipstream','common',75,16,158],
-  ['glacier-tusk','Glacier Tusk','winter','walrus','#849da3','#f0e2bd','tusked','ice-breaker','rare',172,21,58],
-  ['rime-hare','Rime Hare','winter','rabbit','#e4ece8','#85acc2','long-ear','chill-hop','common',64,12,172],
-  ['frost-antler','Frost Antler','winter','deer','#b8c8c9','#f0f5eb','antlered','crystal-rush','rare',120,20,125],
-  ['sleet-penguin','Sleet Penguin','winter','bird','#283a48','#f4eee0','flippered','slick-slide','uncommon',88,14,118],
-  ['polar-puff','Polar Puff','winter','bear','#f0f2e8','#8bc7d4','round','snow-shield','epic',162,22,72],
-  ['aurora-mink','Aurora Mink','winter','mustelid','#5b7287','#86e1bd','slender','aurora-feint','rare',73,23,165],
-
-  ['gloom-hound','Gloom Hound','darkness','canine','#2d304d','#8c70b5','hound','shade-step','common',94,17,140],
-  ['lantern-bat','Lantern Bat','darkness','bat','#3b3150','#73d9b1','winged','echo-pulse','uncommon',66,18,164],
-  ['mire-crow','Mire Crow','darkness','bird','#22243a','#9a86bd','winged','trinket-eye','common',69,15,152],
-  ['duskmane','Duskmane','darkness','cat','#34304a','#cc7ed0','feline','night-pounce','rare',83,22,158],
-  ['moon-shell','Moon Shell','darkness','turtle','#383957','#80c8c1','shelled','lunar-ward','rare',164,14,58],
-  ['wisp-newt','Wisp Newt','darkness','amphibian','#39445b','#66e0bd','low-slung','ghost-lure','uncommon',72,16,144],
-  ['hush-spider','Hush Spider','darkness','arachnid','#29263d','#aa79bf','eight-leg','silence-web','uncommon',62,20,150],
-  ['veil-ram','Veil Ram','darkness','ovine','#4a4057','#b9a0cc','horned','gloam-ram','rare',137,23,92],
-  ['starved-stag','Starved Stag','darkness','deer','#4c465c','#77d5c0','antlered','star-siphon','epic',116,25,128],
-  ['oracle-moth','Oracle Moth','darkness','insect','#55416b','#d28fda','four-wing','future-glimpse','legendary',68,28,156],
-
-  ['dune-jackal','Dune Jackal','desert','canine','#b87942','#f0bd68','hound','sand-sprint','common',88,16,152],
-  ['pebble-camel','Pebble Camel','desert','camelid','#a9784c','#e8c488','humped','water-cache','common',138,14,84],
-  ['sun-kite','Sun Kite','desert','bird','#a85735','#f2d063','winged','updraft','uncommon',67,19,160],
-  ['cactus-hog','Cactus Hog','desert','boar','#756c3a','#b9ba52','tusked','thorn-hide','uncommon',142,20,82],
-  ['dust-runner','Dust Runner','desert','lizard','#c39351','#724f38','low-slung','burrow-dodge','common',72,15,168],
-  ['oasis-ibis','Oasis Ibis','desert','bird','#e5d7b7','#55a7a0','long-beak','healing-spring','rare',74,18,142],
-  ['flint-scorp','Flint Scorp','desert','arachnid','#7e5a3d','#e69843','clawed','venom-pinch','rare',98,24,118],
-  ['mirage-cat','Mirage Cat','desert','cat','#d7ad72','#6ba8ae','feline','double-image','rare',78,21,164],
-  ['mesa-horn','Mesa Horn','desert','bovine','#965d3d','#dfb163','horned','stone-charge','epic',166,26,72],
-  ['solar-scarab','Solar Scarab','desert','insect','#59462f','#f4bc35','shelled','sun-flare','legendary',105,29,125],
-
-  ['foam-seal','Foam Seal','ocean','pinniped','#87b9b2','#d9ead8','flippered','tide-roll','common',104,14,126],
-  ['coral-crab','Coral Crab','ocean','crustacean','#c76655','#f0ad75','clawed','reef-guard','common',126,17,82],
-  ['kelp-otter','Kelp Otter','ocean','mustelid','#6c7563','#9ec78d','slender','shell-toss','uncommon',82,18,158],
-  ['spray-gull','Spray Gull','ocean','bird','#e5e1d5','#527d93','winged','gust-cry','common',64,15,166],
-  ['ribbon-eel','Ribbon Eel','ocean','fish','#488b98','#e4ce65','serpentine','shock-ribbon','rare',76,22,148],
-  ['lagoon-ray','Lagoon Ray','ocean','fish','#477c83','#9bd2bd','wing-fin','glide-wave','uncommon',92,17,139],
-  ['anchor-turtle','Anchor Turtle','ocean','turtle','#52766b','#c5bd75','shelled','anchor-stance','rare',174,18,54],
-  ['pearl-dolphin','Pearl Dolphin','ocean','cetacean','#6aaab8','#e8e9d9','streamlined','sonic-help','rare',98,21,172],
-  ['storm-shark','Storm Shark','ocean','fish','#416c7d','#d2e0d7','fin-back','blood-current','epic',148,27,136],
-  ['crown-jelly','Crown Jelly','ocean','cnidarian','#8d76ba','#6fe0ce','bell','static-bloom','legendary',86,30,116],
-
-  ['ash-pup','Ash Pup','volcano','canine','#55433c','#e56a38','hound','ember-fetch','common',91,17,145],
-  ['cinder-ram','Cinder Ram','volcano','ovine','#4f413b','#ff9a43','horned','magma-ram','uncommon',139,22,88],
-  ['smoke-bat','Smoke Bat','volcano','bat','#3e3b42','#d8654a','winged','smoke-screen','common',65,18,162],
-  ['basalt-toad','Basalt Toad','volcano','amphibian','#4b4d42','#e79735','squat','lava-hop','uncommon',118,19,92],
-  ['char-talon','Char Talon','volcano','bird','#422f2d','#f38439','winged','scorch-dive','rare',78,25,154],
-  ['sulfur-slink','Sulfur Slink','volcano','lizard','#777035','#eec344','low-slung','fume-bite','uncommon',80,21,146],
-  ['forge-beetle','Forge Beetle','volcano','insect','#3a3430','#ffad37','shelled','metal-mend','rare',128,20,78],
-  ['magma-mole','Magma Mole','volcano','mammal','#49362d','#f1733c','clawed','tunnel-burst','rare',112,24,108],
-  ['flare-lion','Flare Lion','volcano','cat','#6f392d','#ffc052','maned','roaring-flame','epic',146,29,126],
-  ['pyre-wing','Pyre Wing','volcano','bird','#75332c','#ffd166','four-wing','rebirth-spark','legendary',108,32,150],
-];
-
-export const PETS = PET_ROWS.map(([id,name,season,type,color,accent,shape,skill,rarity,hp,attack,speed]) => ({
-  id, name, season, type, color, accent, shape, skill, rarity,
-  baseStats:{ hp, attack, speed },
-}));
-
-export const PET_BY_ID = new Map(PETS.map(pet => [pet.id, pet]));
-
-const item = (id,name,age,slot,branch,category,stats={},cost={}) => ({id,name,age,slot,branch,category,stats,cost});
-const primaryStats = {
-  sword:{damage:30,range:78,cooldown:.75,power:3}, axe:{damage:34,range:68,cooldown:.96,power:5},
-  hammer:{damage:22,range:70,cooldown:.55,power:7}, daggers:{damage:17,range:57,cooldown:.34,power:2},
-  spear:{damage:20,range:106,cooldown:.8,power:3}, gloves:{damage:14,range:52,cooldown:.27,power:2},
+// Resource node kinds. `yields` maps gather to a resource; `per` multiplies
+// the weapon's harvest for that node; `hurts` is contact damage per tick.
+export const RESOURCE_TYPES = {
+  tree: { yields: 'wood', r: [70, 100] },
+  rock: { yields: 'stone', r: [48, 66] },
+  bush: { yields: 'food', r: [36, 44] },
+  gold: { yields: 'gold', r: [42, 52] },
+  log: { yields: 'wood', r: [40, 46], per: 4 },
+  cactus: { yields: 'food', r: [32, 38], hurts: 2 },
+  'big-gold': { yields: 'gold', r: [110, 110], per: 3.5 },
 };
-const title = value => value.replaceAll('-',' ').replace(/\b\w/g,letter=>letter.toUpperCase());
-const items = [
-  item('hand','Hand',0,'primary','hand','melee',{damage:8,range:55,cooldown:.45,power:1}),
-  item('apple','Apple',0,'food','apple','food',{healing:20}),
-  item('wooden-wall','Wooden Wall',0,'wall','wall','building',{health:150},{wood:10}),
-  item('wooden-door','Wooden Door',0,'door','door','building',{health:120},{wood:10}),
-  item('wooden-spike','Wooden Spike',0,'spike','spike','building',{health:70,damage:10},{wood:20}),
-  item('wooden-windmill','Wooden Windmill',0,'windmill','windmill','building',{health:100,income:1},{wood:50}),
+export const RESOURCE_MIX = { count: 420, mix: [['tree', .4], ['rock', .26], ['bush', .2], ['gold', .05], ['log', .05], ['cactus', .04]] };
+
+// ---------------- items ----------------
+
+export const TIERS = {
+  wood: { name: 'Wooden', color: '#b9824a', light: '#d9a46a' },
+  stone: { name: 'Stone', color: '#9aa1a6', light: '#c4cace' },
+  gold: { name: 'Golden', color: '#f2c230', light: '#ffe17a' },
+  ruby: { name: 'Ruby', color: '#e2405a', light: '#ff8ea0' },
+  amethyst: { name: 'Amethyst', color: '#a35ce0', light: '#d3a6ff' },
+  sapphire: { name: 'Sapphire', color: '#3c7be8', light: '#93bcff' },
+};
+export const TIER_ORDER = ['wood', 'stone', 'gold', 'ruby', 'amethyst', 'sapphire'];
+export const tierRank = t => TIER_ORDER.indexOf(t);
+
+// harvest: per-hit yields by resource. dmg: vs players; adm: vs animals; bdm: vs buildings.
+// reload in seconds; range is reach beyond the body edge; speed is % move speed while held.
+const H = (w, s, f, g) => ({ wood: w, stone: s, food: f, gold: g });
+const weapon = (id, name, family, shape, tier, dmg, adm, bdm, reload, range, speed, harvest, extra = {}) =>
+  ({ id, name, slot: 'primary', family, shape, tier, dmg, adm, bdm, reload, range, speed, harvest, knock: 70, ...extra });
+
+const PRIMARY = [
+  weapon('hand', 'Hand', 'hand', 'fist', 'wood', 6, 6, 4, .6, 20, 100, H(1, 1, 1, 1), { knock: 30 }),
 ];
-for(const branch of Object.keys(primaryStats))items.push(item(`stone-${branch}`,`Stone ${title(branch)}`,1,'primary',branch,'melee',primaryStats[branch]));
-items.push(
-  item('cookie','Cookie',2,'food','food','food',{healing:35}),item('stone-wall','Stone Wall',2,'wall','wall','building',{health:300},{stone:15}),
-  item('stone-door','Stone Door',3,'door','door','building',{health:260},{stone:15}),item('stone-spike','Stone Spike',3,'spike','spike','building',{health:110,damage:18},{stone:25}),
-  item('big-stone-spike','Big Stone Spike',3,'spike','big-spike','building',{health:180,damage:28},{stone:40,gold:5}),item('stone-windmill','Stone Windmill',3,'windmill','windmill','building',{health:220,income:2},{wood:25,stone:35}),
-  item('normal-magic-tower','Normal Magic Tower',3,'tower','magic-tower','building',{health:240,damage:12,range:280},{wood:30,stone:20,gold:10}),item('wooden-turret','Wooden Turret',3,'turret','turret','building',{health:180,damage:14,range:320},{wood:35,gold:8}),
-  item('stone-bow','Stone Bow',4,'secondary','bow','ranged',{damage:18,range:310,cooldown:.78}),item('stone-shield','Stone Shield',4,'secondary','shield','shield',{block:22}),item('stone-wrench','Stone Wrench',4,'secondary','wrench','tool',{power:5,repair:20,range:68,cooldown:.45}),
-  item('appletor','Appletor',5,'tool','appletor','tool',{tameBonus:.12}),item('slingshot','Slingshot',5,'tool','slingshot','ranged',{damage:8,range:240,cooldown:.5,tameBonus:.08}),item('bug-net','Bug Net',5,'tool','bug-net','tool',{range:70}),item('saddle','Saddle',5,'tool','saddle','tool',{mount:true}),
-  item('boost-pad','Boost Pad',8,'pad','boost-pad','building',{health:100,boost:.3},{wood:20,stone:15,gold:10}),item('bear-trap','Bear Trap',8,'pad','bear-trap','building',{health:110,damage:35},{wood:15,stone:25,gold:8}),item('heal-pad','Heal Pad',8,'pad','heal-pad','building',{health:120,healing:5},{wood:20,stone:20,gold:15}),
-  item('croissant','Croissant',7,'food','instant-food','food',{healing:15,foodUse:10}),item('sandwich','Sandwich',7,'food','regen-food','food',{healing:8,healOverTime:24,foodUse:12}),item('steak','Steak',7,'food','defense-food','food',{healing:12,defense:.1,foodUse:12}),item('toffee-candy','Toffee Candy',7,'food','speed-food','food',{healing:12,speedBoost:.05,foodUse:10}),
-  item('golden-wall','Golden Wall',7,'wall','wall','building',{health:430},{stone:22,gold:8}),
-  item('waffle','Waffle',12,'food','instant-food','food',{healing:18,foodUse:12}),item('salad','Salad',12,'food','regen-food','food',{healing:10,healOverTime:36,foodUse:15}),item('eggs','Eggs',12,'food','defense-food','food',{healing:14,defense:.15,foodUse:14}),item('biscuit','Biscuit',12,'food','speed-food','food',{healing:12,speedBoost:.1,foodUse:12}),item('ruby-wall','Ruby Wall',12,'wall','wall','building',{health:560},{stone:28,gold:12}),
-  item('cake','Cake',16,'food','instant-food','food',{healing:22,foodUse:15}),item('mushroom-soup','Mushroom Soup',16,'food','regen-food','food',{healing:12,healOverTime:48,foodUse:18}),item('meatballs','Meatballs',16,'food','defense-food','food',{healing:16,defense:.2,foodUse:18}),item('roll-cake','Roll Cake',16,'food','speed-food','food',{healing:15,speedBoost:.15,foodUse:16}),item('amethyst-wall','Amethyst Wall',16,'wall','wall','building',{health:720},{stone:36,gold:18}),
-  item('sapphire-wall','Sapphire Wall',20,'wall','wall','building',{health:920},{stone:46,gold:26}),item('amber-wall','Amber Wall',23,'wall','wall','building',{health:1100},{stone:55,gold:35}),
+// families x tiers. Golden arrives at age 6, then ruby 11, amethyst 15, sapphire 19.
+const FAMILY = {
+  sword: { name: 'Sword', shape: 'sword', base: [28, 42, 10, .7, 70, 85, H(1, 1, 1, 1)], step: [3, 5, 2, 0, 0, 0] },
+  axe: { name: 'Axe', shape: 'axe', base: [25, 45, 15, .8, 65, 80, H(4, 1, 1, 1)], step: [4, 6, 5, .04, 0, -2], hstep: H(4, 1, 1, 1) },
+  hammer: { name: 'Hammer', shape: 'hammer', base: [10, 14, 20, .5, 60, 90, H(3, 4, 3, 4)], step: [2, 3, 8, 0, 0, 0], hstep: H(1, 2, 1, 2) },
+  daggers: { name: 'Daggers', shape: 'dagger', base: [10, 13, 4, .3, 55, 95, H(1, 1, 1, 1)], step: [2, 3, 1, 0, 0, 0] },
+  spear: { name: 'Spear', shape: 'spear', base: [20, 30, 6, .9, 100, 85, H(1, 1, 1, 1)], step: [3, 4, 2, 0, 5, 0] },
+};
+const VARIANT = {
+  sword: { id: 'katana', name: 'Katana', shape: 'katana', mod: { reload: -.12, dmg: -2, range: 10 } },
+  axe: { id: 'labrys', name: 'Labrys', shape: 'labrys', mod: { dmg: 4, reload: .1, spin: true } },
+  hammer: { id: 'pickaxe', name: 'Pickaxe', shape: 'pickaxe', mod: { dmg: -2, harvest: H(1, 8, 1, 7) } },
+  daggers: { id: 'cleavers', name: 'Cleavers', shape: 'cleaver', mod: { reload: .1, adm: 4, harvest: H(1, 1, 3, 1) } },
+  spear: { id: 'naginata', name: 'Naginata', shape: 'naginata', mod: { range: 60, reload: .15, dmg: 2 } },
+};
+const WEAPON_TIERS = ['stone', 'gold', 'ruby', 'amethyst', 'sapphire'];
+for (const [fam, f] of Object.entries(FAMILY)) {
+  WEAPON_TIERS.forEach((tier, k) => {
+    const [dmg, adm, bdm, reload, range, speed, harvest] = f.base;
+    const hv = Object.fromEntries(Object.entries(harvest).map(([r, v]) => [r, v + (f.hstep ? f.hstep[r] * k : (k >= 2 ? 1 : 0))]));
+    const name = k === 0 ? (fam === 'sword' ? 'Stone Sword' : fam === 'daggers' ? 'Daggers' : `Stone ${f.name}`) : `${TIERS[tier].name} ${f.name}`;
+    PRIMARY.push(weapon(`${tier}-${fam}`, name, fam, f.shape, tier, dmg + f.step[0] * k, adm + f.step[1] * k, bdm + f.step[2] * k,
+      +(reload + f.step[3] * k).toFixed(2), range + f.step[4] * k, speed + f.step[5] * k, hv));
+    if (k >= 1) {
+      const v = VARIANT[fam], m = v.mod;
+      const base = PRIMARY[PRIMARY.length - 1];
+      PRIMARY.push({
+        ...base, id: `${tier}-${v.id}`, name: `${k === 1 ? '' : TIERS[tier].name + ' '}${v.name}`.trim(), shape: v.shape, variant: true,
+        dmg: base.dmg + (m.dmg || 0), adm: base.adm + (m.adm || 0), reload: +(base.reload + (m.reload || 0)).toFixed(2),
+        range: base.range + (m.range || 0), harvest: m.harvest ? Object.fromEntries(Object.entries(base.harvest).map(([r, val]) => [r, val + m.harvest[r] - 1])) : base.harvest,
+        spin: !!m.spin,
+      });
+    }
+  });
+}
+
+const SECONDARY = [];
+['stone', 'gold', 'ruby', 'amethyst', 'sapphire'].forEach((tier, k) => {
+  SECONDARY.push({ id: `${tier}-bow`, name: `${TIERS[tier].name} Bow`, slot: 'secondary', family: 'bow', shape: 'bow', tier, dmg: 15 + 3 * k + (k > 2 ? 2 : 0), adm: 22 + 5 * k, bdm: 2 + k, reload: k >= 3 ? 1.2 : 1.3, range: 700, speed: 75, ammo: { wood: 5 + k }, projectile: 1100 });
+  SECONDARY.push({ id: `${tier}-shield`, name: `${TIERS[tier].name} Shield`, slot: 'secondary', family: 'shield', shape: 'shield', tier, dmg: 6 + k, adm: 8 + k, bdm: 2, reload: .6, range: 35, speed: 75, block: .5 + .05 * k, knock: 110 });
+  SECONDARY.push({ id: `${tier}-wrench`, name: `${TIERS[tier].name} Wrench`, slot: 'secondary', family: 'wrench', shape: 'wrench', tier, dmg: 8 + k, adm: 10 + k, bdm: 0, reload: .6, range: 60, speed: 90, repair: 30 + 15 * k });
+  if (k >= 1) SECONDARY.push({ id: `${tier}-crossbow`, name: `${TIERS[tier].name} Crossbow`, slot: 'secondary', family: 'bow', shape: 'crossbow', tier, dmg: 20 + 3 * k, adm: 30 + 5 * k, bdm: 3 + k, reload: 1.55 - .05 * k, range: 900, speed: 62, ammo: { wood: 10 + 2 * k }, projectile: 1500 });
+});
+for (const s of SECONDARY) if (s.tier === 'stone') s.name = s.name.replace('Stone ', s.family === 'bow' ? 'Stone ' : '');
+
+const TOOLS = [
+  { id: 'appletor', name: 'Appletor', slot: 'tool', shape: 'appletor', tier: 'wood', reload: .7, range: 600, speed: 65, ammo: { food: 5 }, healPlayer: 10, healPet: 20, tameTool: 'appletor', projectile: 900 },
+  { id: 'slingshot', name: 'Slingshot', slot: 'tool', shape: 'slingshot', tier: 'wood', reload: .7, range: 600, speed: 65, ammo: { stone: 5 }, dmg: 10, adm: 15, tameTool: 'slingshot', projectile: 1000 },
+  { id: 'gold-appletor', name: 'Golden Appletor', slot: 'tool', shape: 'appletor', tier: 'gold', reload: .8, range: 650, speed: 55, ammo: { food: 10 }, healPlayer: 20, healPet: 40, tameTool: 'appletor', safer: true, projectile: 950 },
+  { id: 'gold-slingshot', name: 'Golden Slingshot', slot: 'tool', shape: 'slingshot', tier: 'gold', reload: .7, range: 650, speed: 60, ammo: { stone: 8 }, dmg: 16, adm: 24, tameTool: 'slingshot', safer: true, projectile: 1100 },
+];
+
+const food = (id, name, icon, heal, cost, extra = {}) => ({ id, name, slot: 'food', shape: 'food', icon, heal, cost: { food: cost }, reload: .35, speed: 60, ...extra });
+const FOODS = [
+  food('apple', 'Apple', 'apple', 10, 5),
+  food('cookie', 'Cookie', 'cookie', 12, 8),
+  food('waffle', 'Waffle', 'waffle', 18, 12),
+  food('sandwich', 'Sandwich', 'sandwich', 5, 12, { hot: 5 }),
+  food('steak', 'Steak', 'steak', 12, 12, { armor: .1 }),
+  food('toffee', 'Toffee', 'toffee', 10, 10, { haste: .05 }),
+  food('cake', 'Cake', 'cake', 22, 15),
+  food('soup', 'Mushroom Soup', 'soup', 9, 18, { hot: 9 }),
+  food('meatballs', 'Meatballs', 'meatballs', 16, 18, { armor: .2 }),
+  food('roll', 'Roll Cake', 'roll', 14, 15, { haste: .15 }),
+];
+
+const build = (id, name, kind, tier, cost, hp, limit, extra = {}) => ({ id, name, slot: kind, kind, tier, cost, hp, limit, speed: 60, reload: .25, ...extra });
+const BUILDINGS = [];
+const BT = ['wood', 'stone', 'gold', 'ruby', 'amethyst', 'sapphire'];
+const wallCost = [{ wood: 10 }, { stone: 10 }, { wood: 10, gold: 10 }, { wood: 10, stone: 10, gold: 10 }, { wood: 5, stone: 15, gold: 20 }, { wood: 5, stone: 25, gold: 30 }];
+const spikeCost = [{ wood: 20, stone: 10 }, { wood: 20, stone: 10 }, { wood: 10, gold: 30 }, { wood: 10, stone: 15, gold: 35 }, { wood: 10, stone: 20, gold: 45 }, { wood: 15, stone: 30, gold: 60 }];
+const millCost = [{ wood: 50, stone: 10 }, { wood: 50, stone: 20 }, { wood: 50, gold: 50 }, { wood: 50, stone: 20, gold: 60 }, { wood: 50, stone: 30, gold: 70 }, { wood: 50, stone: 50, gold: 80 }];
+const millGold = [[10, 10], [10, 7.5], [20, 7.5], [20, 5], [30, 5], [35, 2.5]];
+const doorCost = [{ wood: 20 }, { stone: 20 }, { wood: 20, gold: 20 }, { wood: 20, stone: 20, gold: 20 }, { wood: 10, stone: 30, gold: 40 }, { wood: 10, stone: 50, gold: 60 }];
+BT.forEach((tier, k) => {
+  const T = TIERS[tier].name;
+  BUILDINGS.push(build(`${tier}-wall`, `${T} Wall`, 'wall', tier, wallCost[k], [400, 600, 800, 900, 1000, 1200][k], 50, { r: 42 }));
+  BUILDINGS.push(build(`${tier}-door`, `${T} Door`, 'door', tier, doorCost[k], [200, 300, 400, 500, 600, 800][k], 6, { r: 42 }));
+  BUILDINGS.push(build(`${tier}-spike`, `${T} Spike`, 'spike', tier, spikeCost[k], [200, 300, 400, 500, 600, 700][k], 15, { r: 40, touch: 2 + k }));
+  BUILDINGS.push(build(`${tier}-windmill`, `${T} Windmill`, 'windmill', tier, millCost[k], [200, 300, 400, 500, 600, 700][k], 5, { r: 44, gold: millGold[k][0], every: millGold[k][1] }));
+});
+BUILDINGS.push(
+  build('big-spike', 'Big Stone Spike', 'spike', 'stone', { wood: 30, stone: 25 }, 400, 12, { r: 54, touch: 3, big: true }),
+  build('wood-turret', 'Wooden Turret', 'turret', 'wood', { wood: 70, stone: 20 }, 120, 2, { r: 44, dmg: 10, every: 1, range: 650 }),
+  build('stone-turret', 'Stone Turret', 'turret', 'stone', { wood: 80, stone: 30 }, 160, 2, { r: 44, dmg: 12, every: 1.5, range: 700 }),
+  build('gold-turret', 'Golden Turret', 'turret', 'gold', { wood: 90, stone: 40, gold: 150 }, 200, 2, { r: 44, dmg: 15, every: 1.5, range: 750 }),
+  build('fire-tower', 'Fire Tower', 'tower', 'wood', { wood: 70, stone: 20, gold: 20 }, 240, 1, { r: 44, dmg: 18, every: 7, range: 600, element: 'fire' }),
+  build('boost-pad', 'Boost Pad', 'boost', 'wood', { wood: 30, stone: 30, gold: 100 }, 100, 10, { r: 40 }),
+  build('bear-trap', 'Bear Trap', 'trap', 'stone', { wood: 20, stone: 40, gold: 50 }, 160, 4, { r: 40, dmg: 40, adm: 120 }),
+  build('heal-pad', 'Heal Pad', 'heal', 'wood', { wood: 60, stone: 60, gold: 300 }, 500, 2, { r: 44, heal: 10, every: .6 }),
+  build('big-boost-pad', 'Big Boost Pad', 'boost', 'gold', { wood: 40, stone: 40, gold: 150 }, 160, 10, { r: 54 }),
+  build('big-heal-pad', 'Big Heal Pad', 'heal', 'gold', { wood: 80, stone: 80, gold: 400 }, 700, 2, { r: 56, heal: 15, every: .6 }),
 );
-const primaryBranches={sword:['sword','katana'],axe:['axe','labrys'],hammer:['hammer','pickaxe'],daggers:['daggers','cleaver'],spear:['spear','naginata'],gloves:['gloves']};
-for(const [root,branches] of Object.entries(primaryBranches))for(const branch of branches){const base=primaryStats[root];items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,6,'primary',branch,'melee',{...base,damage:Math.round(base.damage*1.15),power:base.power+1}));for(const [age,tier,mult] of [[11,'ruby',1.28],[15,'amethyst',1.4],[19,'sapphire',1.52],[22,'amber',1.65]])items.push(item(`${tier}-${branch}`,`${title(tier)} ${title(branch)}`,age,'primary',branch,'melee',{...base,damage:Math.round(base.damage*mult),power:base.power+Math.floor(mult*2)}))}
-for(const branch of ['bow','crossbow','musket','minigun'])items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,10,'secondary',branch,'ranged',{damage:branch==='musket'?40:branch==='crossbow'?31:branch==='minigun'?9:24,range:branch==='musket'?430:350,cooldown:branch==='minigun'?.18:branch==='musket'?1.25:.7}));
-for(const branch of ['shield','crystal-shield','spike-shield'])items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,10,'secondary',branch,'shield',{block:branch==='crystal-shield'?40:30,damage:branch==='spike-shield'?12:0}));
-items.push(item('golden-wrench','Golden Wrench',10,'secondary','wrench','tool',{power:8,repair:35,range:72,cooldown:.4}));
-for(const branch of ['bow','crossbow','musket','minigun','shield','crystal-shield','spike-shield','wrench'])for(const [age,tier] of [[14,'ruby'],[18,'amethyst'],[21,'sapphire'],[24,'amber']]){const base=items.find(entry=>entry.id===`golden-${branch}`);if(base)items.push(item(`${tier}-${branch}`,`${title(tier)} ${title(branch)}`,age,'secondary',branch,base.category,{...base.stats,damage:Math.round((base.stats.damage||0)*(1+(age-10)*.04)),block:Math.round((base.stats.block||0)*(1+(age-10)*.03))}))}
-for(const baseId of ['stone-door','stone-spike','big-stone-spike','stone-windmill','normal-magic-tower','wooden-turret']){const base=items.find(entry=>entry.id===baseId);for(const [age,tier,mult] of [[9,'golden',1.3],[13,'ruby',1.6],[17,'amethyst',1.9],[20,'sapphire',2.25],[23,'amber',2.6],[27,'emerald',3]])items.push(item(`${tier}-${base.branch}`,`${title(tier)} ${title(base.branch)}`,age,base.slot,base.branch,'building',{...base.stats,health:Math.round((base.stats.health||100)*mult),damage:Math.round((base.stats.damage||0)*mult)},Object.fromEntries(Object.entries(base.cost).map(([key,value])=>[key,Math.round(value*mult)]))))}
-for(const branch of ['appletor','slingshot','bug-net','saddle']){const base=items.find(entry=>entry.id===branch);items.push(item(`golden-${branch}`,`Golden ${title(branch)}`,25,'tool',branch,base.category,{...base.stats,tameBonus:(base.stats.tameBonus||0)+.1}))}
-for(const branch of ['boost-pad','bear-trap','heal-pad']){const base=items.find(entry=>entry.id===branch);items.push(item(`big-${branch}`,`Big ${title(branch)}`,26,'pad',branch,'building',{...base.stats,health:base.stats.health*2},Object.fromEntries(Object.entries(base.cost).map(([key,value])=>[key,Math.round(value*1.8)]))),item(`strong-${branch}`,`Strong ${title(branch)}`,26,'pad',branch,'building',{...base.stats,damage:(base.stats.damage||0)*1.8,healing:(base.stats.healing||0)*1.8,boost:(base.stats.boost||0)*1.5},Object.fromEntries(Object.entries(base.cost).map(([key,value])=>[key,Math.round(value*1.6)]))))}
 
-export const ITEMS=items;
-export const STARTING_ITEMS=['hand','apple','wooden-wall','wooden-door','wooden-spike','wooden-windmill'];
-export const AGE_CHOICES={
-  1:['stone-sword','stone-axe','stone-hammer','stone-daggers','stone-spear','stone-gloves'],
-  2:['cookie','stone-wall'],
-  3:['stone-door','stone-spike','big-stone-spike','stone-windmill','normal-magic-tower','wooden-turret'],
-  4:['stone-bow','stone-shield','stone-wrench'],
-  5:['appletor','slingshot','bug-net','saddle'],
-  7:['croissant','sandwich','steak','toffee-candy','golden-wall'],
-  8:['boost-pad','bear-trap','heal-pad'],
+export const ITEMS = [...PRIMARY, ...SECONDARY, ...TOOLS, ...FOODS, ...BUILDINGS];
+export const ITEM_BY_ID = new Map(ITEMS.map(item => [item.id, item]));
+export const STARTING_ITEMS = ['hand', 'apple', 'wood-wall', 'wood-door', 'wood-spike', 'wood-windmill'];
+export const START_RESOURCES = { food: 20, wood: 20, stone: 20, gold: 0 };
+export const SLOT_ORDER = ['primary', 'secondary', 'tool', 'food', 'wall', 'door', 'spike', 'windmill', 'turret', 'tower', 'boost', 'trap', 'heal'];
+export const BUILD_LIMIT = 105;
+
+// ---------------- leveling ----------------
+
+export const xpForAge = age => 40 * (age + 1);
+export const MAX_AGE = 100;
+export const LAST_CHOICE_AGE = 27;
+
+const slotItem = (items, slot) => items.map(id => ITEM_BY_ID.get(id)).find(it => it?.slot === slot);
+function nextTier(items, slot) {
+  const cur = slotItem(items, slot);
+  if (!cur) return null;
+  const want = TIER_ORDER[tierRank(cur.tier) + 1];
+  const it = ITEMS.find(x => x.slot === slot && x.tier === want && (x.family ? x.family === cur.family && !!x.variant === !!cur.variant && x.shape === cur.shape : !x.big));
+  return it?.id || null;
+}
+function primaryAtTier(items, tier) {
+  const cur = slotItem(items, 'primary');
+  if (!cur || cur.family === 'hand') return [`${tier}-sword`];
+  const out = [`${tier}-${cur.family}`];
+  const v = VARIANT[cur.family];
+  if (ITEM_BY_ID.has(`${tier}-${v.id}`)) out.push(`${tier}-${v.id}`);
+  if (cur.variant) out.reverse();
+  return out;
+}
+function secondaryAtTier(items, tier) {
+  const cur = slotItem(items, 'secondary');
+  if (!cur) return [`${tier}-bow`, `${tier}-shield`, `${tier}-wrench`].filter(id => ITEM_BY_ID.has(id));
+  const out = [`${tier}-${cur.shape === 'crossbow' ? 'crossbow' : cur.family}`];
+  if (cur.family === 'bow') out.push(cur.shape === 'crossbow' ? `${tier}-bow` : `${tier}-crossbow`);
+  return out.filter(id => ITEM_BY_ID.has(id));
+}
+function buildingTier(items) {
+  return ['wall', 'spike', 'windmill', 'door'].map(slot => nextTier(items, slot)).filter(Boolean).slice(0, 4);
+}
+
+// Upgrade offered at each age, modelled on the documented upgrade tree.
+export const AGE_TREE = {
+  1: () => ['stone-sword', 'stone-axe', 'stone-hammer', 'stone-daggers', 'stone-spear'],
+  2: () => ['cookie', 'stone-wall'],
+  3: () => ['stone-windmill', 'stone-spike', 'big-spike', 'wood-turret', 'fire-tower', 'stone-door'],
+  4: items => secondaryAtTier(items, 'stone'),
+  5: () => ['appletor', 'slingshot'],
+  6: items => primaryAtTier(items, 'gold'),
+  7: () => ['waffle', 'sandwich', 'steak', 'toffee'],
+  8: () => ['boost-pad', 'bear-trap', 'heal-pad'],
+  9: items => buildingTier(items),
+  10: items => [...secondaryAtTier(items, 'gold'), 'stone-turret'],
+  11: items => primaryAtTier(items, 'ruby'),
+  12: items => ['cake', nextTier(items, 'wall')].filter(Boolean),
+  13: items => buildingTier(items),
+  14: items => secondaryAtTier(items, 'ruby'),
+  15: items => primaryAtTier(items, 'amethyst'),
+  16: items => ['soup', 'meatballs', 'roll', nextTier(items, 'wall')].filter(Boolean),
+  17: items => buildingTier(items),
+  18: items => [...secondaryAtTier(items, 'amethyst'), 'gold-turret'],
+  19: items => primaryAtTier(items, 'sapphire'),
+  20: items => buildingTier(items),
+  21: items => secondaryAtTier(items, 'sapphire'),
+  23: items => buildingTier(items),
+  25: items => [slotItem(items, 'tool')?.id === 'slingshot' ? 'gold-slingshot' : 'gold-appletor', slotItem(items, 'tool')?.id === 'slingshot' ? 'gold-appletor' : 'gold-slingshot'],
+  26: items => [slotItem(items, 'boost')?.id ? 'big-boost-pad' : null, slotItem(items, 'heal')?.id ? 'big-heal-pad' : null, slotItem(items, 'trap') ? 'big-spike' : null].filter(Boolean),
+  27: items => buildingTier(items),
+};
+export function ageChoices(age, items) {
+  const fn = AGE_TREE[age];
+  if (!fn) return [];
+  const have = new Set(items);
+  return [...new Set(fn(items))].filter(id => id && ITEM_BY_ID.has(id) && !have.has(id));
+}
+
+// ---------------- pets ----------------
+// Elemental types: attacker type vs defender type multiplies pet damage.
+export const TYPES = {
+  normal: { color: '#c8c2b0', strong: [], weak: ['rock', 'shadow'] },
+  fire: { color: '#ff7a2e', strong: ['plant', 'insect', 'ice'], weak: ['rock', 'water', 'fire'] },
+  water: { color: '#3d9cf0', strong: ['rock', 'fire'], weak: ['water', 'plant'] },
+  plant: { color: '#5cc34a', strong: ['rock', 'water'], weak: ['plant', 'poison', 'insect', 'fire'] },
+  electric: { color: '#ffd23f', strong: ['water'], weak: ['rock', 'electric', 'plant'] },
+  ice: { color: '#8fe3ff', strong: ['plant'], weak: ['water', 'fire', 'ice'] },
+  poison: { color: '#b062e0', strong: ['plant', 'combat', 'shadow'], weak: ['rock', 'poison', 'insect'] },
+  rock: { color: '#b0916a', strong: ['electric', 'poison', 'insect', 'fire', 'ice'], weak: ['combat'] },
+  combat: { color: '#e0533d', strong: ['normal', 'rock', 'ice'], weak: ['poison', 'insect', 'shadow'] },
+  insect: { color: '#a3c43a', strong: ['plant', 'poison'], weak: ['combat', 'fire', 'shadow'] },
+  shadow: { color: '#6b5bb8', strong: ['normal', 'combat'], weak: ['poison', 'shadow'] },
+};
+export function typeMultiplier(attacker, defender) {
+  if (!attacker || !defender) return 1;
+  let m = 1;
+  for (const d of defender) {
+    if (TYPES[attacker].strong.includes(d)) m *= 3;
+    else if (TYPES[attacker].weak.includes(d)) m *= .375;
+  }
+  return Math.max(.25, Math.min(3, m));
+}
+
+// Skills: one per pet, cast with the skill key. Cooldown shortens as the pet grows.
+export const SKILLS = {
+  blaze: { name: 'Blaze', cd: 30, desc: 'Burst of flame that burns nearby enemies.' },
+  vines: { name: 'Draining Vines', cd: 28, desc: 'Roots the target, draining health back to the pet.' },
+  wave: { name: 'Tidal Wave', cd: 28, desc: 'A wave that pushes enemies away.' },
+  thunder: { name: 'Thunder', cd: 30, desc: 'Lightning strike; may paralyse.' },
+  frost: { name: 'Frost Wall', cd: 30, desc: 'Icy ring that may freeze enemies.' },
+  venom: { name: 'Venom Cloud', cd: 28, desc: 'Poison cloud around the pet.' },
+  boulder: { name: 'Rolling Shell', cd: 26, desc: 'Charges forward like a cannonball.' },
+  scratch: { name: 'Fury Scratch', cd: 25, desc: 'Three rapid heavy swipes.' },
+  swarm: { name: 'Swarm', cd: 28, desc: 'Stings every enemy around.' },
+  shade: { name: 'Shadow Step', cd: 26, desc: 'Teleports behind the target and strikes.' },
+  rally: { name: 'Rally', cd: 30, desc: 'Heals its tamer and the pack.' },
 };
 
-const ITEM_LOOKUP=new Map(ITEMS.map(entry=>[entry.id,entry]));
-const PRIMARY_EVOLUTIONS={sword:['sword','katana'],axe:['axe','labrys'],hammer:['hammer','pickaxe'],daggers:['daggers','cleaver'],spear:['spear','naginata'],gloves:['gloves']};
-export function getAgeChoices(age,loadout){
-  const current=slot=>ITEM_LOOKUP.get(loadout.find(id=>ITEM_LOOKUP.get(id)?.slot===slot));
-  if(age===6){const branch=current('primary')?.branch||'sword';return(PRIMARY_EVOLUTIONS[branch]||[branch]).map(name=>`golden-${name}`)}
-  if(age===10){const branch=current('secondary')?.branch;if(branch==='bow')return['golden-bow','golden-crossbow','golden-musket','golden-minigun'];if(branch==='shield')return['golden-shield','golden-crystal-shield','golden-spike-shield'];if(branch==='wrench')return['golden-wrench'];return[]}
-  const primaryTier={11:'ruby',15:'amethyst',19:'sapphire',22:'amber'}[age];if(primaryTier)return[`${primaryTier}-${current('primary')?.branch}`];
-  const secondaryTier={14:'ruby',18:'amethyst',21:'sapphire',24:'amber'}[age];if(secondaryTier)return[`${secondaryTier}-${current('secondary')?.branch}`];
-  if(age===7)return loadout.includes('cookie')?['croissant','sandwich','steak','toffee-candy']:loadout.includes('stone-wall')?['golden-wall']:[];
-  if(age===12||age===16){const food=current('food'),wall=current('wall');if(food?.age>0){const ids={12:{'instant-food':'waffle','regen-food':'salad','defense-food':'eggs','speed-food':'biscuit'},16:{'instant-food':'cake','regen-food':'mushroom-soup','defense-food':'meatballs','speed-food':'roll-cake'}};return[ids[age][food.branch]].filter(Boolean)}if(wall?.age>0)return[age===12?'ruby-wall':'amethyst-wall']}
-  const building=loadout.map(id=>ITEM_LOOKUP.get(id)).filter(entry=>entry?.category==='building'&&['door','spike','windmill','tower','turret'].includes(entry.slot)&&entry.age>0).sort((a,b)=>b.age-a.age)[0];
-  if(age===23&&current('wall')?.id==='sapphire-wall')return['amber-wall'];
-  const buildingTier={9:'golden',13:'ruby',17:'amethyst',20:'sapphire',23:'amber',27:'emerald'}[age];if(buildingTier&&building){const upgrade=`${buildingTier}-${building.branch}`;if(age===20&&current('wall')?.age>0)return[upgrade,'sapphire-wall'];return[upgrade]}
-  if(age===25){const tool=current('tool');return tool?[`golden-${tool.branch}`]:[]}
-  if(age===26){const pad=current('pad');return pad?[`big-${pad.branch}`,`strong-${pad.branch}`]:[]}
-  return AGE_CHOICES[age]||[];
-}
+// hp, bite and speed are [baby, adult, boss]. tame is base percent.
+// temper: passive (never attacks), coward (flees when hurt), neutral (fights back), aggressive (hunts players).
+const pet = (id, name, season, body, color, accent, types, rarity, tame, tool, temper, hp, bite, speed, skill, extra = {}) =>
+  ({ id, name, season, body, color, accent, types, rarity, tame, tool, temper, hp, bite, speed, skill, ...extra });
+
+export const PETS = [
+  // forest: the three starters have high tame chances
+  pet('wolf', 'Wolf', 'forest', 'canine', '#9aa0a8', '#e9ecef', ['fire'], 'common', 66, 'slingshot', 'aggressive', [200, 400, 1000], [6, 12, 30], [200, 250, 280], 'blaze', { mark: '#ff7a2e' }),
+  pet('rabbit', 'Rabbit', 'forest', 'rabbit', '#e8dcc8', '#f6b6c0', ['plant'], 'common', 66, 'appletor', 'passive', [150, 250, 700], [3, 4, 14], [270, 290, 370], 'vines'),
+  pet('bear', 'Bear', 'forest', 'bear', '#7b5232', '#c99a6b', ['water'], 'common', 66, 'slingshot', 'neutral', [300, 600, 1500], [4, 8, 19], [200, 240, 250], 'wave'),
+  pet('fox', 'Fox', 'forest', 'fox', '#e8813a', '#fff1dc', ['electric'], 'rare', 14, 'appletor', 'coward', [200, 400, 1000], [4, 8, 19], [240, 280, 310], 'thunder'),
+  pet('boar', 'Boar', 'forest', 'boar', '#8a5e3c', '#3e2a1c', ['poison'], 'rare', 10, 'slingshot', 'neutral', [300, 600, 1250], [4, 12, 24], [240, 270, 310], 'venom'),
+  pet('hedgehog', 'Hedgehog', 'forest', 'hedgehog', '#a77b55', '#5b3d26', ['fire'], 'rare', 12, 'appletor', 'neutral', [300, 700, 1200], [4, 10, 22], [210, 260, 290], 'blaze'),
+  pet('deer', 'Deer', 'forest', 'deer', '#c08a55', '#efe2c2', ['plant'], 'rare', 12, 'appletor', 'coward', [250, 500, 1100], [4, 9, 20], [260, 300, 340], 'rally', { pattern: 'spots' }),
+  pet('owl', 'Owl', 'forest', 'bird', '#a07d52', '#e5cf9e', ['normal'], 'epic', 8, 'slingshot', 'neutral', [180, 360, 900], [5, 11, 26], [260, 300, 360], 'scratch'),
+  // winter
+  pet('penguin', 'Penguin', 'winter', 'bird', '#2f3b4a', '#f4efe2', ['ice'], 'common', 10, 'appletor', 'passive', [200, 400, 800], [4, 8, 16], [240, 270, 330], 'frost'),
+  pet('lynx', 'Lynx', 'winter', 'cat', '#cdbb9a', '#5b4a38', ['combat'], 'rare', 10, 'slingshot', 'aggressive', [200, 400, 800], [6, 14, 30], [200, 250, 280], 'scratch', { pattern: 'spots' }),
+  pet('arctic-fox', 'Arctic Fox', 'winter', 'fox', '#f2efe8', '#a9c6d6', ['ice'], 'common', 18, 'appletor', 'coward', [180, 360, 900], [4, 9, 20], [250, 290, 330], 'frost'),
+  pet('polar-bear', 'Polar Bear', 'winter', 'bear', '#f3f1ea', '#b9d7e3', ['ice', 'water'], 'epic', 8, 'slingshot', 'aggressive', [350, 700, 1700], [5, 11, 24], [190, 230, 250], 'wave'),
+  pet('reindeer', 'Reindeer', 'winter', 'deer', '#8d6a4a', '#e8dcc4', ['ice'], 'rare', 12, 'appletor', 'neutral', [260, 520, 1200], [4, 10, 22], [260, 300, 340], 'rally'),
+  // darkness
+  pet('bat', 'Bat', 'darkness', 'bat', '#3b3150', '#73d9b1', ['shadow'], 'common', 16, 'slingshot', 'neutral', [150, 300, 700], [5, 10, 22], [280, 310, 380], 'shade'),
+  pet('black-cat', 'Black Cat', 'darkness', 'cat', '#2a2733', '#ffd23f', ['shadow'], 'rare', 12, 'appletor', 'coward', [200, 400, 900], [5, 11, 25], [260, 300, 340], 'shade'),
+  pet('spider', 'Spider', 'darkness', 'spider', '#29263d', '#aa79bf', ['insect', 'poison'], 'rare', 10, 'slingshot', 'aggressive', [180, 360, 850], [6, 12, 26], [230, 270, 310], 'venom'),
+  pet('raven', 'Raven', 'darkness', 'bird', '#22243a', '#9a86bd', ['shadow'], 'epic', 8, 'slingshot', 'neutral', [180, 360, 900], [6, 13, 28], [270, 310, 370], 'shade'),
+  pet('glow-moth', 'Glow Moth', 'darkness', 'insect', '#5ad6b0', '#d6fff1', ['insect', 'electric'], 'legendary', 4, 'appletor', 'passive', [160, 320, 800], [4, 9, 22], [270, 300, 360], 'thunder'),
+  // desert
+  pet('camel', 'Camel', 'desert', 'goat', '#d6a15f', '#8e5f2f', ['normal'], 'common', 18, 'appletor', 'passive', [300, 600, 1300], [3, 7, 16], [200, 230, 270], 'rally'),
+  pet('scorpion', 'Scorpion', 'desert', 'scorpion', '#d9a92c', '#7e4d12', ['insect', 'poison'], 'rare', 10, 'slingshot', 'aggressive', [200, 400, 900], [6, 13, 28], [220, 260, 300], 'venom'),
+  pet('armadillo', 'Armadillo', 'desert', 'turtle', '#c69a72', '#8a6545', ['rock'], 'rare', 14, 'slingshot', 'neutral', [400, 800, 1500], [3, 6, 12], [220, 270, 300], 'boulder'),
+  pet('snake', 'Sand Snake', 'desert', 'serpent', '#c6a24a', '#7a5a1e', ['poison'], 'rare', 10, 'slingshot', 'aggressive', [180, 360, 850], [6, 13, 27], [240, 280, 320], 'venom', { pattern: 'spots' }),
+  pet('caracal', 'Caracal', 'desert', 'cat', '#c98d55', '#3b2a1c', ['combat'], 'epic', 7, 'slingshot', 'neutral', [220, 440, 950], [7, 15, 32], [260, 300, 350], 'scratch'),
+  // ocean
+  pet('crab', 'Crab', 'ocean', 'crab', '#e0533d', '#ffb3a2', ['water', 'rock'], 'common', 16, 'slingshot', 'neutral', [250, 500, 1100], [4, 9, 20], [200, 230, 270], 'boulder'),
+  pet('turtle', 'Sea Turtle', 'ocean', 'turtle', '#5f9a52', '#7b5a32', ['water'], 'rare', 12, 'appletor', 'passive', [400, 900, 1800], [3, 6, 13], [170, 200, 240], 'wave'),
+  pet('seal', 'Seal', 'ocean', 'seal', '#8da2b3', '#e0e8ee', ['water', 'ice'], 'rare', 12, 'appletor', 'coward', [260, 520, 1200], [4, 9, 20], [230, 270, 310], 'wave'),
+  pet('axolotl', 'Axolotl', 'ocean', 'lizard', '#f5a3c0', '#e05a8c', ['water'], 'epic', 8, 'appletor', 'passive', [150, 300, 800], [3, 4, 12], [260, 270, 330], 'rally'),
+  pet('shark', 'Shark', 'ocean', 'fish', '#6b7f95', '#e8eef2', ['water', 'combat'], 'legendary', 4, 'slingshot', 'aggressive', [300, 650, 1500], [8, 16, 34], [260, 300, 360], 'scratch'),
+  // volcano
+  pet('salamander', 'Salamander', 'volcano', 'lizard', '#e0532d', '#ffcf3a', ['fire'], 'common', 14, 'appletor', 'neutral', [200, 400, 950], [5, 11, 24], [240, 280, 320], 'blaze', { pattern: 'spots' }),
+  pet('magma-boar', 'Magma Boar', 'volcano', 'boar', '#4b3431', '#ff7b2e', ['fire', 'rock'], 'rare', 10, 'slingshot', 'aggressive', [320, 640, 1400], [5, 13, 26], [230, 260, 300], 'boulder'),
+  pet('ember-fox', 'Ember Fox', 'volcano', 'fox', '#c73b1e', '#ffd23f', ['fire', 'electric'], 'epic', 8, 'appletor', 'coward', [200, 420, 1000], [5, 10, 24], [260, 300, 340], 'thunder'),
+  pet('phoenix', 'Phoenix', 'volcano', 'bird', '#ff7a1f', '#ffd23f', ['fire'], 'legendary', 4, 'appletor', 'neutral', [220, 480, 1200], [7, 15, 32], [280, 320, 380], 'blaze', { pattern: 'flame' }),
+];
+export const PET_BY_ID = new Map(PETS.map(p => [p.id, p]));
+export const RARITY = {
+  common: { color: '#a3adb8', label: 'Common' },
+  rare: { color: '#4aa3ff', label: 'Rare' },
+  epic: { color: '#b45cff', label: 'Epic' },
+  legendary: { color: '#ffb02e', label: 'Legendary' },
+};
+export const PET_STAGE = ['Baby', 'Adult', 'Boss'];
+export const PET_XP = [500, 2500];
+export const MAX_PETS = 3;
+
+// Stationary bosses, one per season. Killing one pays big gold and drops
+// three legendary babies from that season.
+export const BOSSES = [
+  { id: 'old-oak', name: 'Old Oak', season: 'forest', body: 'treant', color: '#6b4a2b', accent: '#97cf3a', hp: 8000, dmg: 60, reach: 230, every: 1.6, gold: 5000, xp: 4000, minions: 'wolf' },
+  { id: 'frost-golem', name: 'Frost Golem', season: 'winter', body: 'golem', color: '#9fe3f5', accent: '#e9fbff', hp: 9000, dmg: 55, reach: 220, every: 1.8, gold: 5000, xp: 4500, minions: 'arctic-fox' },
+  { id: 'shade-cap', name: 'Shade Cap', season: 'darkness', body: 'mushroom', color: '#7a5fd0', accent: '#7dfcd2', hp: 8000, dmg: 50, reach: 220, every: 1.4, gold: 5000, xp: 4000, minions: 'spider' },
+  { id: 'sand-colossus', name: 'Sand Colossus', season: 'desert', body: 'golem', color: '#c69a5c', accent: '#f0d090', hp: 9500, dmg: 60, reach: 230, every: 1.8, gold: 5500, xp: 4500, minions: 'scorpion' },
+  { id: 'deep-kraken', name: 'Deep Kraken', season: 'ocean', body: 'kraken', color: '#b0477a', accent: '#ff9ac9', hp: 9000, dmg: 55, reach: 260, every: 1.6, gold: 5500, xp: 4500, minions: 'crab' },
+  { id: 'magma-titan', name: 'Magma Titan', season: 'volcano', body: 'golem', color: '#5c3b33', accent: '#ff7b2e', hp: 10000, dmg: 65, reach: 230, every: 1.8, gold: 6000, xp: 5000, minions: 'salamander' },
+];
+export const BOSS_BY_ID = new Map(BOSSES.map(b => [b.id, b]));
+
+// Cosmetic + light-effect hats bought with gold. Lost on leaving the server.
+export const HATS = [
+  { id: 'none', name: 'No hat', cost: 0, note: '' },
+  { id: 'leaf', name: 'Leaf Cap', cost: 200, note: '+1 wood per hit' },
+  { id: 'miner', name: 'Miner Helmet', cost: 2000, note: '+2 stone and gold per hit', gather: { stone: 2, gold: 2 } },
+  { id: 'tamer', name: 'Tamer Cap', cost: 2500, note: 'Tame chance x1.29', tame: 1.29 },
+  { id: 'beanie', name: 'Snow Beanie', cost: 1200, note: '+15% speed in Winter', biome: 'winter' },
+  { id: 'flower', name: 'Flower Crown', cost: 3000, note: 'Pets regenerate twice as fast' },
+  { id: 'horns', name: 'Warrior Horns', cost: 6000, note: '+10% damage' },
+  { id: 'knight', name: 'Knight Helmet', cost: 10000, note: '-40% damage taken, -15% speed', armor: .4, slow: .15 },
+  { id: 'crown', name: 'Golden Crown', cost: 20000, note: 'Pure prestige' },
+];
+export const HAT_BY_ID = new Map(HATS.map(h => [h.id, h]));

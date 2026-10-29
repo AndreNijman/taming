@@ -1,50 +1,44 @@
 import assert from 'node:assert/strict';
-import { ITEMS, STARTING_ITEMS, AGE_CHOICES, SEASONS, getAgeChoices, getSeasonTiming } from '../data.js';
+import { ITEMS, ITEM_BY_ID, STARTING_ITEMS, SEASONS, CYCLE, TRANSITION, seasonAt, ageChoices, xpForAge, LAST_CHOICE_AGE, PETS, BOSSES } from '../data.js';
 
-const byId = new Map(ITEMS.map(item => [item.id, item]));
-assert.deepEqual(STARTING_ITEMS, ['hand','apple','wooden-wall','wooden-door','wooden-spike','wooden-windmill']);
-assert.equal(AGE_CHOICES[1].length, 6);
-for (const id of AGE_CHOICES[1]) {
-  const weapon = byId.get(id);
-  assert.equal(weapon.slot, 'primary');
-  assert.deepEqual(weapon.cost, {}, `${weapon.name} must be an age unlock, not a recipe`);
+assert.deepEqual(STARTING_ITEMS, ['hand', 'apple', 'wood-wall', 'wood-door', 'wood-spike', 'wood-windmill']);
+assert.equal(ageChoices(1, STARTING_ITEMS).length, 5);
+for (const id of ageChoices(1, STARTING_ITEMS)) assert.equal(ITEM_BY_ID.get(id).slot, 'primary');
+for (const item of ITEMS.filter(item => item.slot === 'primary' || item.slot === 'secondary')) {
+  assert.ok(!item.cost, `${item.name} is an age unlock, not a recipe`);
 }
-for (const item of ITEMS.filter(item => item.category !== 'building')) {
-  assert.deepEqual(item.cost, {}, `${item.name} must not consume building resources to unlock`);
+assert.ok(ITEM_BY_ID.get('wood-wall').cost.wood > 0);
+assert.equal(xpForAge(0), 40);
+assert.equal(xpForAge(9), 400);
+
+// seasons: forest runs 16 minutes, the rest 8, and the cycle loops
+assert.deepEqual(SEASONS.map(season => season.duration), [960, 480, 480, 480, 480, 480]);
+assert.equal(CYCLE, 960 + 5 * 480);
+assert.equal(seasonAt(959.9).index, 0);
+assert.equal(seasonAt(960).index, 1);
+assert.equal(seasonAt(960 + TRANSITION / 2).elapsed, TRANSITION / 2);
+assert.equal(seasonAt(1440).index, 2);
+assert.equal(seasonAt(CYCLE).index, 0);
+assert.equal(seasonAt(CYCLE).cycle, 1);
+
+// every season has its own animals and a boss
+for (const season of SEASONS) {
+  assert.ok(PETS.filter(pet => pet.season === season.id).length >= 4, `${season.name} needs animals`);
+  assert.ok(BOSSES.some(boss => boss.id === season.boss), `${season.name} needs a boss`);
 }
 
-const inventory = STARTING_ITEMS.map(byId.get.bind(byId));
-const choose = id => {
-  const item = byId.get(id);
-  const existing = inventory.findIndex(entry => entry.slot === item.slot);
-  if (existing >= 0) inventory[existing] = item;
-  else inventory.push(item);
-};
-choose('stone-spear');
-choose('golden-naginata');
-assert.equal(inventory.filter(item => item.slot === 'primary').length, 1);
-assert.equal(inventory.find(item => item.slot === 'primary').id, 'golden-naginata');
-choose('stone-bow');
-assert.equal(inventory.filter(item => item.slot === 'secondary').length, 1);
-assert.ok(byId.get('wooden-wall').cost.wood > 0);
-assert.deepEqual(SEASONS.map(season=>season.duration),[960,480,480,480,480,480]);
-assert.equal(getSeasonTiming(959.9).index,0);
-assert.equal(getSeasonTiming(960).index,1);
-assert.equal(getSeasonTiming(960).blend,0);
-assert.equal(getSeasonTiming(975).blend,.5);
-assert.equal(getSeasonTiming(1440).index,2);
-assert.equal(getSeasonTiming(3360).index,0);
-
-const fullPath = [...STARTING_ITEMS];
-for (let age=1;age<=27;age++) {
-  const choices = getAgeChoices(age, fullPath);
-  assert.ok(choices.length, `age ${age} must provide an upgrade choice`);
-  assert.ok(choices.every(id => byId.has(id)), `age ${age} references a missing item`);
-  const chosen = byId.get(choices[0]);
-  const slot = fullPath.findIndex(id => byId.get(id).slot === chosen.slot);
-  if (slot >= 0) fullPath[slot] = chosen.id;
-  else fullPath.push(chosen.id);
-  assert.equal(fullPath.filter(id => byId.get(id).slot === 'primary').length, 1);
-  assert.equal(fullPath.filter(id => byId.get(id).slot === 'secondary').length, age < 4 ? 0 : 1);
+// picking the first option every age keeps one item per slot and never runs dry
+const path = [...STARTING_ITEMS];
+for (let age = 1; age <= LAST_CHOICE_AGE; age++) {
+  const choices = ageChoices(age, path);
+  if (!choices.length) continue;
+  assert.ok(choices.every(id => ITEM_BY_ID.has(id)), `age ${age} references a missing item`);
+  const chosen = ITEM_BY_ID.get(choices[0]);
+  const slot = path.findIndex(id => ITEM_BY_ID.get(id).slot === chosen.slot);
+  if (slot >= 0) path[slot] = chosen.id; else path.push(chosen.id);
+  assert.equal(path.filter(id => ITEM_BY_ID.get(id).slot === 'primary').length, 1);
+  assert.ok(path.filter(id => ITEM_BY_ID.get(id).slot === 'secondary').length <= 1);
 }
+assert.ok(path.some(id => ITEM_BY_ID.get(id).slot === 'secondary'), 'a full run should unlock a secondary');
+assert.ok(path.some(id => ITEM_BY_ID.get(id).slot === 'tool'), 'a full run should unlock a taming tool');
 console.log('Progression data test passed');

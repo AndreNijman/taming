@@ -6,18 +6,26 @@ A clean-room browser survival game inspired by the gathering, building and pet-t
 
 ## Features
 
-- Real-time top-down gathering and combat
-- Wood, stone, food and gold resources with respawning deposits
-- Slot-based age progression through age 27: one primary branch, one secondary branch, one tool, food, walls, buildings and pads
-- Walls, traps and automated towers
-- 60 wild species across six seasonal rosters, sleeping babies, probabilistic taming and three pet evolutions
-- Six code-drawn seasonal world treatments and one boss encounter per season
-- Companion following, combat AI and a three-pet limit
-- Six rotating biomes, minimap, chat, death and respawn
-- Solo play with seven autonomous rival tamers
-- Named public/private lobbies with configurable capacity and CPU rivals
-- Server-authoritative Cloudflare Durable Object multiplayer
-- Desktop, keyboard/mouse and touch controls
+- One shared world that cycles through six seasons: a 16 minute Forest, then 8 minutes each of Winter, Darkness, Desert, Ocean and Volcano. Resources reset every season, and a gold node stays at the centre.
+- Age progression from 40 XP for the first age, with one upgrade choice per age up to age 27: weapon families, bows, shields and wrenches, taming tools, foods, walls, doors, spikes, windmills, turrets and pads.
+- 100 HP and no natural regeneration, so food is your healing.
+- Sleeping babies you tame with Space. Common starters are easy, while rare animals need the Appletor or Slingshot to raise the odds. A failed attempt makes the baby angry.
+- Up to three pets that grow from baby to adult to boss. Each has an elemental type and a skill with a cooldown, and you can order them to defend, attack, stay or move to a spot.
+- One stationary boss per season that summons packs as it weakens and drops three sleeping babies when it dies.
+- Gold is the score. Windmills earn it over time, and hats cost it. When you die, the killer takes a sixth of your gold, but your pets and buildings stay.
+- Solo play against nine CPU tamers, or named public or private lobbies with CPU rivals.
+- Solo and multiplayer run the same deterministic simulation (`sim.js`). Multiplayer runs it inside a Cloudflare Durable Object.
+- Keyboard and mouse, plus touch controls.
+
+### Code layout
+
+| File | Role |
+|---|---|
+| `data.js` | Seasons, items, age tree, pets, bosses and hats |
+| `sim.js` | Authoritative simulation, bots and snapshot encoding |
+| `render.js` | Procedural canvas art for every entity |
+| `game.js` | Browser client: menus, input, HUD and drawing |
+| `worker.js` | Lobby registry and `GameRoom` Durable Object |
 
 ## Development
 
@@ -51,16 +59,25 @@ The production client uses `wildbound-relay.tung-tung-tung-sahur.workers.dev`.
 |---|---|
 | WASD / arrows | Move |
 | Mouse | Aim |
-| Click / Space | Attack, harvest or place |
-| E | Toggle auto-attack |
-| . | Tame nearby sleeping baby |
-| B | Eat food |
-| 1-3 | Select a companion |
-| 4-6 | Use companion skills |
+| Click | Hit, gather, build or eat with the selected item |
+| 1-9 | Select a hotbar item |
+| Space | Tame a nearby sleeping baby |
+| Q | Quick eat |
+| F | Use pet skills |
+| Right click | Send pets to a spot |
+| X | Switch pets between defend and attack |
+| E | Toggle auto attack |
 | L | Lock aim direction |
-| M / C | World map / field shop |
-| U / H / G | Wall / trap / tower |
+| M / C | Map / hat shop |
 | Enter | Chat |
-| Escape | Pause |
+| Escape | Pause (solo) |
+
+## Tests
+
+```bash
+npm run check    # syntax, data and headless simulation tests
+npm test         # browser smoke test for solo play
+npm run test:mp  # two-browser multiplayer test against wrangler dev
+```
 
 No Taming.io source code, assets, text, branding or private protocol information is used by this project.
