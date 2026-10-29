@@ -37,12 +37,16 @@ try {
   // move to open ground so placement and movement checks are not blocked by trees
   await page.evaluate(() => {
     const { game, S } = window.wildbound, world = game.local, me = world.players.me;
+    // the most open spot: furthest from resources, then animals and other tamers (a busy map may have no perfect one)
+    let best = null, bestScore = -Infinity;
     for (let y = 600; y < world.h - 600; y += 120) for (let x = 600; x < world.w - 600; x += 120) {
-      const crowded = S.nearbyResources(world, x, y, 420).some(n => Math.hypot(n.x - x, n.y - y) < n.r + 420)
-        || world.animals.some(a => Math.hypot(a.x - x, a.y - y) < 500)
-        || Object.values(world.players).some(p => p !== me && Math.hypot(p.x - x, p.y - y) < 600);
-      if (!crowded) { me.x = x; me.y = y; me.vx = me.vy = 0; return; }
+      const gap = list => Math.min(420, ...list);
+      const score = gap(S.nearbyResources(world, x, y, 420).map(n => Math.hypot(n.x - x, n.y - y) - n.r)) * 4
+        + gap(world.animals.map(a => Math.hypot(a.x - x, a.y - y) / 1.2)) * 2
+        + gap(Object.values(world.players).filter(p => p !== me).map(p => Math.hypot(p.x - x, p.y - y) / 1.4));
+      if (score > bestScore) { bestScore = score; best = { x, y }; }
     }
+    me.x = best.x; me.y = best.y; me.vx = me.vy = 0;
   });
   await page.waitForTimeout(300);
 
@@ -50,10 +54,12 @@ try {
   await page.waitForTimeout(100);
   await page.locator('#hotbar .slot.selected').nth(0).waitFor();
   if (await page.locator('#hotbar .slot').nth(2).evaluate(element => !element.classList.contains('selected'))) throw new Error('building slot was not selectable');
-  const beforeStructures = Number(await hook('structures'));
+  // count only our own buildings: bots build and lose theirs in view too
+  const ownStructures = () => page.evaluate(() => window.wildbound.game.local.structures.filter(s => s.owner === 'me').length);
+  const beforeStructures = await ownStructures();
   await page.mouse.move(900, 360); await page.waitForTimeout(100);
   await page.mouse.down(); await page.waitForTimeout(120); await page.mouse.up(); await page.waitForTimeout(150);
-  if (Number(await hook('structures')) !== beforeStructures + 1) throw new Error('clicking the selected building did not place it');
+  if (await ownStructures() !== beforeStructures + 1) throw new Error('clicking the selected building did not place it');
   if (await hook('action') !== 'build') throw new Error('building action was not reported');
   const wall = JSON.parse(await hook('test-structure'));
   if (wall.item !== 'wood-wall') throw new Error(`expected a wooden wall, got ${wall.item}`);
