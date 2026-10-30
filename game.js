@@ -53,7 +53,7 @@ function show(id) {
 function playerName() {
   const value = $('player-name').value.trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 16);
   try { if (value) localStorage.setItem('wildbound-name', value); } catch {}
-  return value || 'Wanderer';
+  return value || 'Leo';
 }
 function stored(key, fallback) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } }
 $('player-name').value = stored('wildbound-name', '');

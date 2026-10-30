@@ -237,3 +237,14 @@ assert.equal(me.hp, 100);
 }
 
 console.log('Sim test passed');
+
+// eating with the food slot selected heals (the swing cooldown used to block eat() before it ran)
+{
+  const w = S.createWorld(55), p = S.addPlayer(w, { id: 'e', name: 'E' });
+  for (const id of Object.keys(w.players)) if (id !== 'e') delete w.players[id];
+  p.hp = 50; p.res.food = 50; p.cd = 0;
+  S.setInput(w, 'e', { mx: 0, my: 0, angle: 0, sel: p.items.indexOf('apple'), attack: true, seq: 1 });
+  S.step(w, 0.05);
+  assert.ok(p.hp > 50, 'clicking with food selected heals');
+  assert.ok(p.res.food < 50, 'and costs food');
+}

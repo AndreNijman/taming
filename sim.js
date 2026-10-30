@@ -679,7 +679,8 @@ function updatePlayer(world, p, dt) {
   p.poison = Math.max(0, p.poison - dt); p.burn = Math.max(0, p.burn - dt);
   if (p.dead) return;
   if (inp.attack && world.time >= p.cd) {
-    p.cd = world.time + (it.reload || .4);
+    // eat() checks and sets its own cooldown, so food must not start one first
+    if (it.slot !== 'food') p.cd = world.time + (it.reload || .4);
     if (it.slot === 'food') { if (!eat(world, p)) p.cd = world.time + .2; }
     else if (it.kind) { if (place(world, p, it)) p.actionAt = world.time; else p.cd = world.time + .2; }
     else if (it.ammo) { if (shoot(world, p, it)) p.actionAt = world.time; }

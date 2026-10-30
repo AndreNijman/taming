@@ -12,7 +12,7 @@ const GLOBAL_EVENTS = new Set(['boss', 'death']);
 const DEV_HOST = 'wildbound.andrenijman.com'; // dev passes (netdev.js) are only valid for this host
 const encoder = new TextEncoder();
 
-function cleanName(value, fallback = 'Wanderer', max = 16) {
+function cleanName(value, fallback = 'Leo', max = 16) {
   const name = String(value || '').replace(/[^a-z0-9 _-]/gi, '').replace(/\s+/g, ' ').trim().slice(0, max);
   return name || fallback;
 }

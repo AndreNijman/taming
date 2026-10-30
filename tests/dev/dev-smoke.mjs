@@ -107,16 +107,16 @@ try {
   for (const page of [host, guest]) assert.ok(!(await page.evaluate(() => { const toast = document.getElementById('toast'); return toast.classList.contains('on') && toast.textContent.startsWith('Gather'); })), 'the players did not re-begin their world');
   for (const [name, page] of Object.entries({ host, guest, andre })) await page.screenshot({ path:join(shots, `dev-joined-${name}.png`) });
   assert.ok(!(await andre.evaluate(() => location.search)).includes('join='), 'the join link is cleared');
-  assert.deepEqual(await andre.evaluate(() => window.__gamesPlayer), { name:'Wanderer', room }, "the dev's page reports its name and room");
+  assert.deepEqual(await andre.evaluate(() => window.__gamesPlayer), { name:'Leo', room }, "the dev's page reports its name and room");
   // The game adjusted: the dev's tamer is in everyone's world and one bot stepped aside.
   for (const page of [host, guest, andre]) {
-    await page.waitForFunction(() => (document.querySelector('#game')?.dataset.tamers || '').includes('human:Wanderer'), null, { timeout:5000 });
+    await page.waitForFunction(() => (document.querySelector('#game')?.dataset.tamers || '').includes('human:Leo'), null, { timeout:5000 });
     const now = await tamers(page);
-    assert.deepEqual(now.filter(t => t.startsWith('human:')).sort(), ['human:Guest', 'human:Host', 'human:Wanderer']);
+    assert.deepEqual(now.filter(t => t.startsWith('human:')).sort(), ['human:Guest', 'human:Host', 'human:Leo']);
     assert.equal(now.filter(t => t.startsWith('bot:')).length, 1);
     assert.equal(await page.locator('#game').getAttribute('data-render-error'), null);
   }
-  await host.waitForFunction(() => /left the range to make room for Wanderer/.test(document.getElementById('feed')?.textContent || ''), null, { timeout:5000 });
+  await host.waitForFunction(() => /left the range to make room for Leo/.test(document.getElementById('feed')?.textContent || ''), null, { timeout:5000 });
   // The dev plays: walking moves its tamer.
   const x0 = Number(await andre.locator('#game').getAttribute('data-player-x'));
   await andre.keyboard.down(x0 > 1600 ? 'KeyA' : 'KeyD'); await andre.waitForTimeout(700); await andre.keyboard.up(x0 > 1600 ? 'KeyA' : 'KeyD'); await andre.waitForTimeout(300);
