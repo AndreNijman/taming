@@ -168,6 +168,22 @@ try {
   await page.click("#close-shop");
   await page.screenshot({ path: "/tmp/wildbound-mechanics.png" });
   assert.deepEqual(errors, []);
+  await page.evaluate(async()=>{
+    const {game}=window.wildbound,w=game.local,p=w.players.me;
+    const {PET_BY_ID}=await import('../data.js');
+    const S=await import('../sim.js');
+    for(const id of Object.keys(w.players))if(id!=='me')delete w.players[id];
+    p.hp=p.maxHp=10000;p.choices=[9];p.items=['hand','apple','fire-tower'];p.pets=[];
+    const def=PET_BY_ID.get('camel'),a={id:'visual-camel',species:'camel',x:p.x+40,y:p.y-100,vx:0,vy:0,r:52,angle:0,hp:def.hp[2],maxHp:def.hp[2],stage:2,owner:p.id,sleep:false,home:{x:p.x+40,y:p.y-100},mode:'stop',post:{x:p.x+40,y:p.y-100},cd:0,xp:0,skillAt:-999,lastHurtAt:w.time,wanderAt:999};
+    w.animals=[a];p.pets=[a.id];
+    const enemy=S.addPlayer(w,{id:'visual-enemy',name:'Target'});Object.assign(enemy,{x:p.x+370,y:p.y-100,hp:10000,maxHp:10000,shieldUntil:0});
+    S.command(w,p.id,{t:'skill',x:enemy.x,y:enemy.y});
+  });
+  await page.waitForFunction(()=>window.wildbound.game.cur.hazards.some(h=>h.shape==='beam'));
+  assert.equal(await page.locator('#age-options button').count(),8);
+  await page.waitForTimeout(350);
+  await page.screenshot({path:'/tmp/wildbound-completion-skills.png'});
+  assert.deepEqual(errors,[]);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.click("#menu-button");
   if (

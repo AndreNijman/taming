@@ -65,7 +65,7 @@ export const BOSS_PROFILES = {
     types: ["water"],
     drops: ["octopus"],
     attacks: [
-      attack("poison", 5, 6, "poison", { duration: 5, tick: 0.5, blind: 2 }),
+      attack("poison", 5, 6, "poison", { duration: 2.5, tick: 0.5, blind: 2 }),
       attack("whirlpool", 20, 9, "poison", {
         duration: 5,
         tick: 0.5,

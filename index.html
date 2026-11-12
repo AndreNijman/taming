@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20261112-2">
+  <link rel="stylesheet" href="style.css?v=20261112-3">
   <!-- one version bump busts every module while keeping each a singleton -->
   <script type="importmap">
-    { "imports": { "./data.js": "./data.js?v=20261112-2", "./sim.js": "./sim.js?v=20261112-2", "./render.js": "./render.js?v=20261112-2", "./netping.js": "./netping.js?v=20261112-2", "./netprobe.js": "./netprobe.js?v=20261112-2", "./netdev.js": "./netdev.js?v=20261112-2", "./predict.js": "./predict.js?v=20261112-2" } }
+    { "imports": { "./data.js": "./data.js?v=20261112-3", "./sim.js": "./sim.js?v=20261112-3", "./render.js": "./render.js?v=20261112-3", "./netping.js": "./netping.js?v=20261112-3", "./netprobe.js": "./netprobe.js?v=20261112-3", "./netdev.js": "./netdev.js?v=20261112-3", "./predict.js": "./predict.js?v=20261112-3" } }
   </script>
 </head>
 <body>
@@ -50,7 +50,7 @@
           <p><kbd>L</kbd><span>Lock aim</span></p><p><kbd>M</kbd><span>Map</span></p>
           <p><kbd>C</kbd><span>Hats & wings</span></p><p><kbd>Enter</kbd><span>Chat</span></p>
         </div>
-        <p class="copy">Each age lets you pick one upgrade. You start with 100 health and no natural regeneration, so carry food. If you fall you lose your age and items, the killer takes a sixth of your gold, but your pets and buildings stay.</p>
+        <p class="copy">Each age lets you pick one upgrade. You start with 100 health and no natural regeneration, so carry food. If you fall, you keep 40% of your total age XP and return with the upgrades you can still use. The killer takes a sixth of your gold, but your pets and buildings stay.</p>
         <button id="close-how" class="primary">Got it</button>
       </div>
     </section>
@@ -93,7 +93,7 @@
       <header class="screen-head"><button id="leave-lobby" class="back" aria-label="Leave lobby">←</button><div><span>Waiting room</span><h2 id="lobby-name">Lobby</h2></div></header>
       <div class="lobby-sheet card">
         <div><h3>Tamers</h3><div id="roster" class="roster"></div></div>
-        <div class="lobby-rules"><h3>Rules</h3><p>One shared world with six biomes and their bosses</p><p>Player fights are on</p><p id="lobby-cpu"></p><p id="lobby-region"></p></div>
+        <div class="lobby-rules"><h3>Rules</h3><p>One shared biome at a time, cycling through six seasons and their bosses</p><p>Player fights are on</p><p id="lobby-cpu"></p><p id="lobby-region"></p></div>
       </div>
       <button id="start-match" class="primary big start-button">Start</button>
       <p id="lobby-wait" class="muted">Only the lobby creator can start.</p>
@@ -164,6 +164,6 @@
     </section>
     <div id="toast" role="status" aria-live="polite"></div>
   </main>
-  <script type="module" src="game.js?v=20261112-2"></script>
+  <script type="module" src="game.js?v=20261112-3"></script>
 </body>
 </html>

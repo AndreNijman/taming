@@ -6,7 +6,7 @@ A clean-room browser survival game inspired by the gathering, building and pet-t
 
 ## Features
 
-- One shared world that cycles through six seasons: a 16 minute Forest, then 8 minutes each of Winter, Darkness, Desert, Ocean and Volcano. Resources reset every season, and a gold node stays at the centre.
+- One shared world that cycles through six seasons: a 15 minute Forest, then 8 minutes each of Winter, Darkness, Desert, Ocean and Volcano. Resources reset every season, and a gold node stays at the centre.
 - Age progression from 40 XP for the first age, with one upgrade choice per age up to age 27: weapon families, bows, shields and wrenches, taming tools, foods, walls, doors, spikes, windmills, turrets and pads.
 - 100 HP and no natural regeneration, so food is your healing.
 - Sleeping babies you tame with Space. Common starters are easy, while rare animals need the Appletor or Slingshot to raise the odds. A failed attempt makes the baby angry.

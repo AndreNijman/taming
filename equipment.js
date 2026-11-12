@@ -22,17 +22,29 @@ export function sourceTypes(source) {
 }
 export const isDog = (source) =>
   !!source?.species && /(^dog$|dog$)/.test(source.species);
-export function statusImmune(world, t, element, by) {
+export function statusImmune(world, t, element, by, kind) {
   const p = t.items ? t : world.players[t.owner],
     acc = accessory(p);
   return !!(
-    t.effects?.some((e) => e.kind === "steadfast" && e.until > world.time) ||
-    (t.items && acc.cape && acc.element === element) ||
-    (acc.immuneDog && isDog(by))
+    (t.effects?.some((e) => e.kind === "steadfast" && e.until > world.time) &&
+      [
+        "slow",
+        "push",
+        "pull",
+        "hat-disabled",
+        "build-block",
+        "skill-block",
+      ].includes(kind)) ||
+    (t.items &&
+      acc.cape &&
+      (acc.element === element || sourceTypes(by).includes(acc.element))) ||
+    (t.items && acc.immuneDog && isDog(by))
   );
 }
 export function incomingMultiplier(world, t, by, opts = {}) {
-  const types = opts.element ? [opts.element] : sourceTypes(by),
+  const types = [
+      ...new Set([opts.element, ...sourceTypes(by)].filter(Boolean)),
+    ],
     acc = accessory(t.items ? t : null),
     h = equippedHat(t, world.time);
   let m = 1;
@@ -40,7 +52,7 @@ export function incomingMultiplier(world, t, by, opts = {}) {
     m *= h.incoming || 1;
     if (h.gloveArmor && ITEM_BY_ID.get(t.held)?.family === "gloves")
       m *= 1 - h.gloveArmor;
-    if (acc.cape && types.includes(acc.element))
+    if (acc.cape && !opts.ignoreCape && types.includes(acc.element))
       m *= 1 - (opts.skill ? 0.8 : by?.species ? 0.2 : 0.4);
     if (acc.dogArmor && isDog(by)) m *= 1 - acc.dogArmor;
   }
@@ -68,9 +80,12 @@ export function outgoingMultiplier(world, by, opts = {}) {
     const h = equippedHat(owner, world.time),
       acc = accessory(owner);
     const element = opts.element || def.types[0];
-    if (h.element === element)
+    if (h.element === element || def.types.includes(h.element))
       m *= opts.skill ? h.petSkill || 1 : h.petBite || 1;
-    if (acc.element === element && !acc.cape)
+    if (
+      (acc.element === element || def.types.includes(acc.element)) &&
+      !acc.cape
+    )
       m *= opts.skill ? acc.petSkill || 1 : acc.petBite || 1;
     if (h.cowBuff && ["cow", "bull"].includes(by.species)) m *= h.cowBuff;
     if (h.dogBuff && isDog(by)) m *= h.dogBuff;
@@ -114,7 +129,10 @@ export function updateEffects(world, t, dt, api) {
       t.skillBlockedUntil = Math.max(t.skillBlockedUntil || 0, world.time + dt);
     if (e.kind === "build-block")
       t.buildBlockedUntil = Math.max(t.buildBlockedUntil || 0, world.time + dt);
-    if (["poison", "burn"].includes(e.kind) && world.time >= (e.tickAt || 0)) {
+    if (
+      ["poison", "burn", "bleed"].includes(e.kind) &&
+      world.time >= (e.tickAt || 0)
+    ) {
       e.tickAt = world.time + 0.5;
       api.hurt(
         world,

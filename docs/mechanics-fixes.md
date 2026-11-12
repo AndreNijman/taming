@@ -1,6 +1,6 @@
 # Wildbound mechanics fixes
 
-Branch: `fix/wildbound-mechanics`. Shared rules apply to solo and relay games. This branch changes deterministic resources and snapshot fields: deploy relay and client together, relay first. No production deployment has been performed.
+Branch: `fix/wildbound-mechanics`. Shared rules apply to solo and relay games. This branch changes deterministic resources and snapshot fields: deploy relay and client together, relay first. The previous mechanics pass (`ba1162b`) is deployed. This completion pass must also ship relay first.
 
 ## Implemented
 
@@ -23,8 +23,16 @@ Branch: `fix/wildbound-mechanics`. Shared rules apply to solo and relay games. T
 | 31–33 | Damage does not shake the camera. Food press eats once. Punches alternate hands, including across snapshots. |
 | 41, 42 | 65 hats and 38 accessories, searchable equipment shop, matching elemental wings/capes, weapon bonuses, status immunity, specialist effects and stronger Knight Helmet penalty. |
 
+## Completion audit
+
+The reported scope has implementations and regression coverage across all 45 points. This pass replaces remaining generic skill behaviour: single-target tracking curses; forward beams and projectile interception; moving tsunami/smog; four Oryx traps; aimed healing webs; travelling lava and ice trails; three Shark bites; Menhir's baby reset; support areas that affect allies entering later; and separate Axolotl shield anchors. Slowdown values now mean remaining speed. Harmful effects interrupt skills when the pet is weak to the effect's type.
+
+All eight tower upgrades are available. Water heals allies, Rock damages structures, Spectrum creates a pulling vortex, Magic and Repair push enemies, and Blowpipe retains its branch. Supplemental numeric tables close missing spike, food, saddle and tower entries. The official November 5 balance notes supersede older wiki values for Sword damage, guaranteed five-hit Glove knockouts, and cape coverage of caster/skill elements.
+
+`tools/completion-test.mjs` adds 29 targeted regressions. `tools/boss-encounters.mjs` runs six starter and six prepared encounters with real damage, healing, minions and skill cooldowns. With seed 456+boss index, starters are defeated in 4.7–7.0 seconds; counter-type pets, a Sapphire Sword, Knight Helmet, matching cape, food and telegraph dodging clear all six in 44.6–252.6 seconds each. The total of those isolated prepared fights is 662.6 seconds, before travel, resource gathering or season waits. These are automated strategies, not measured human clear times. Fast kills with a strong counter build remain possible; the game does not impose an artificial minimum fight duration.
+
 ## Reference and tuning limits
 
 Animal stage tables, item properties, equipment effects and six boss profiles are recorded in the reference modules and [source notes](reference-sources.md). Regression tests cast all 47 species at all three stages, exercise equipment effects, boss rewards, upgrade branches and multiplayer snapshot compatibility.
 
-This is an original implementation with procedural artwork. The requested mechanics are implemented, but exact gameplay parity has not been established from video. Resource respawn timers, skill radii, some boss intervals and movement penalties remain local tuning where the public reference does not provide an unambiguous number. The wiki describes Forest as 16 minutes; the implementation follows the user's requested 15 minutes. These limits must remain explicit when reporting completion.
+This is an original implementation with procedural artwork. The reported mechanics are implemented and tested. Exact frame-by-frame parity with the reference game is not established. Resource respawn timers, skill radii, some boss intervals and movement penalties are explicit local tuning where the public reference does not provide an unambiguous number. Damage values omitted by the newer Salamander, Lava Golem, Octopus, Stone Golem and Mantle infoboxes are also explicit local values in `pet-abilities.js`; these skills now deal real damage rather than silently defaulting to zero. The wiki describes Forest as 16 minutes; the implementation follows the user's requested 15 minutes. These limits must remain explicit when reporting completion.

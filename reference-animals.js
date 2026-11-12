@@ -1338,19 +1338,19 @@ export const ANIMAL_REFERENCE = {
     "skillName": "Feather of Fear",
     "skillStats": [
       {
-        "reload": 22.0,
+        "reload": 23.0,
+        "slowdown": 0.95,
+        "defense_malus": 0.95
+      },
+      {
+        "reload": 20.0,
         "slowdown": 0.9,
-        "defense_malus": 0.96
+        "defense_malus": 0.9
       },
       {
-        "reload": 18.0,
+        "reload": 16.0,
         "slowdown": 0.85,
-        "defense_malus": 0.91
-      },
-      {
-        "reload": 14.0,
-        "slowdown": 0.8,
-        "defense_malus": 0.87
+        "defense_malus": 0.86
       }
     ]
   },
@@ -1405,14 +1405,14 @@ export const ANIMAL_REFERENCE = {
         "animal_dmg_ot": 1.0
       },
       {
-        "reload": 16.0,
+        "reload": 17.0,
         "player_dmg": 1.0,
         "player_dmg_ot": 1.0,
         "animal_dmg": 2.0,
         "animal_dmg_ot": 2.0
       },
       {
-        "reload": 12.0,
+        "reload": 14.0,
         "player_dmg": 1.0,
         "player_dmg_ot": 1.0,
         "animal_dmg": 3.0,
@@ -1812,7 +1812,7 @@ export const ANIMAL_REFERENCE = {
     "skillName": "Time-Stopping Bubble",
     "skillStats": [
       {
-        "reload": 35.0,
+        "reload": 40.0,
         "slowdown": 0.8,
         "dmg_reduction": 0.05,
         "building_defense": 0.05,
@@ -1820,7 +1820,7 @@ export const ANIMAL_REFERENCE = {
         "animal_dmg_ot": 1.0
       },
       {
-        "reload": 30.0,
+        "reload": 35.0,
         "slowdown": 0.65,
         "dmg_reduction": 0.1,
         "building_defense": 0.1,
@@ -1828,7 +1828,7 @@ export const ANIMAL_REFERENCE = {
         "animal_dmg_ot": 2.0
       },
       {
-        "reload": 25.0,
+        "reload": 30.0,
         "slowdown": 0.5,
         "dmg_reduction": 0.15,
         "building_defense": 0.15,
@@ -1901,10 +1901,10 @@ export const ANIMAL_REFERENCE = {
       {
         "reload": 35.0,
         "player_dmg": 10.0,
-        "player_dmg_ot": 9.0,
+        "player_dmg_ot": 8.0,
         "animal_dmg": 20.0,
-        "animal_dmg_ot": 18.0,
-        "building_dmg": 90.0,
+        "animal_dmg_ot": 16.0,
+        "building_dmg": 70.0,
         "building_dmg_ot": 16.0
       }
     ]

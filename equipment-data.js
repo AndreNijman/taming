@@ -109,8 +109,8 @@ export const EQUIPMENT_HATS = [
     "cheek",
     "Cheek Protection",
     8000,
-    "Gloves: protection, damage and 50% knockout chance",
-    { gloveArmor: 0.1, gloveDamage: 1.2, knockout: 0.5 },
+    "Gloves: protection and stronger damage",
+    { gloveArmor: 0.1, gloveDamage: 1.2, knockout: 0 },
   ),
   hat(
     "termite",
@@ -232,13 +232,11 @@ export const EQUIPMENT_ACCESSORIES = [
     family: "axe",
     damage: 1.2,
   }),
-  hat(
-    "round-wings",
-    "Final Round Wings",
-    20000,
-    "20% more glove damage and more knockouts",
-    { family: "gloves", damage: 1.2, knockout: 0.1 },
-  ),
+  hat("round-wings", "Final Round Wings", 20000, "20% more glove damage", {
+    family: "gloves",
+    damage: 1.2,
+    knockout: 0,
+  }),
 ];
 const ELEMENTS = [
   ["normal", "Normal", "Crown of Horns", 7000, 6000, 8000],

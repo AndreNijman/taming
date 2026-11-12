@@ -400,7 +400,7 @@ test("turrets and towers acquire wild animals and bosses", () => {
       cd: 0,
     });
     S.step(w, 0.05);
-    assert.ok(w.projectiles.length > 0, type);
+    assert.ok(type === "fire-tower" ? a.hp < 8000 : w.projectiles.length > 0, type);
     step(w, 0.5);
     assert.ok(a.hp < 8000, type);
   }

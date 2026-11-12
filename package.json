@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "serve": "npx serve . -l 4173",
-    "check": "node --check equipment-data.js && node --check equipment.js && node --check reference-animals.js && node --check reference-items.js && node --check boss-data.js && node --check pet-abilities.js && node --check data.js && node --check sim.js && node --check render.js && node --check game.js && node --check worker.js && node --check netsmooth.js && node --check predict.js && node tools/progression-test.mjs && node tools/sim-test.mjs && node tools/mechanics-test.mjs && node tools/parity-test.mjs && node tools/netlog-test.mjs && node tests/latency/netsmooth.test.mjs && node tests/latency/move.test.mjs && node tests/latency/predict.test.mjs",
+    "check": "node --check equipment-data.js && node --check equipment.js && node --check reference-animals.js && node --check reference-tables.js && node --check reference-items.js && node --check boss-data.js && node --check pet-abilities.js && node --check data.js && node --check sim.js && node --check render.js && node --check game.js && node --check worker.js && node --check netsmooth.js && node --check predict.js && node tools/progression-test.mjs && node tools/sim-test.mjs && node tools/mechanics-test.mjs && node tools/parity-test.mjs && node tools/completion-test.mjs && node tools/boss-encounters.mjs && node tools/netlog-test.mjs && node tests/latency/netsmooth.test.mjs && node tests/latency/move.test.mjs && node tests/latency/predict.test.mjs",
     "test": "node tools/smoke.mjs",
     "test:controls": "node tools/controls-test.mjs",
     "test:mp": "node tools/mp-smoke.mjs",

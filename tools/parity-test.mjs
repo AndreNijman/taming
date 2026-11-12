@@ -287,6 +287,7 @@ test("element capes prevent matching harmful status and reduce skill damage", ()
     pet(w, p, "fox");
     e.wings = cape;
     S.command(w, p.id, { t: "skill" });
+    step(w,.8);
     return e;
   };
   const normal = run("none"),
@@ -311,7 +312,7 @@ test("element equipment multiplies only matching pet skill damage", () => {
 });
 test("real weapon stats, food branches, second food slot, tower and big-spike branches", () => {
   assert.equal(ITEM_BY_ID.get("gold-katana").speed, 70);
-  assert.equal(ITEM_BY_ID.get("stone-sword").dmg, 30);
+  assert.equal(ITEM_BY_ID.get("stone-sword").dmg, 28);
   assert.equal(ITEM_BY_ID.get("gold-minigun").reload, 0.08);
   assert.equal(ITEM_BY_ID.get("gold-appletor").ammo.gold, 25);
   const { w, p } = world();
@@ -331,7 +332,7 @@ test("real weapon stats, food branches, second food slot, tower and big-spike br
   );
   assert.equal(
     S.currentOffer({ ...p, choices: [9], items: ["fire-tower"] }).length,
-    5,
+    8,
   );
   assert.deepEqual(
     S.currentOffer({ ...p, choices: [9], items: ["big-spike"] }),

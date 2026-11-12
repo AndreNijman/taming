@@ -972,6 +972,9 @@ export function drawProjectile(c, j, time) {
     case 'thorn':
       c.beginPath(); c.moveTo(20, 0); c.lineTo(-10, -9); c.lineTo(-4, 0); c.lineTo(-10, 9); c.closePath(); ink(c, '#7a4a2b', 3);
       break;
+    case 'iceball': circle(c,0,0,14);ink(c,'#8fd6e5',3);break;
+    case 'rockball': circle(c,0,0,14);ink(c,'#9c8462',3);break;
+    case 'shadowball': circle(c,0,0,14);ink(c,'#655182',3);break;
     case 'plantball': circle(c,0,0,14);ink(c,'#6da844',3);break;
     case 'waterball': circle(c,0,0,14);ink(c,'#64a8cc',3);break;
     case 'fireball':
@@ -984,7 +987,16 @@ export function drawProjectile(c, j, time) {
 }
 
 export function drawHazard(c, h, time) {
-  if (['poison','roots','whirlpool','toxic-fog','lava-pool'].includes(h.kind) || h.kind.startsWith('pet-')) {
+  if(h.shape==='beam'){
+    c.save();c.translate(h.x,h.y);c.rotate(h.angle||0);
+    const color=h.kind==='pet-fire-blast'?'#ed752e':'#67b5ce';
+    c.globalAlpha=.45;c.beginPath();c.roundRect(0,-h.width,h.r,h.width*2,h.width);c.fillStyle=color;c.fill();
+    c.globalAlpha=.9;
+    if(h.kind==='pet-tentacles')for(let i=-2;i<=2;i++){c.beginPath();c.moveTo(0,0);c.quadraticCurveTo(h.r*.5,i*h.width*.6,h.r,i*h.width*.45);stroke2(c,5,color);}
+    else for(let i=-1;i<=1;i++){c.beginPath();c.moveTo(0,i*h.width*.5);c.lineTo(h.r,i*h.width*.5+Math.sin(time*12)*8);stroke2(c,4,color);}
+    c.restore();return;
+  }
+  if (['poison','roots','whirlpool','toxic-fog','lava-pool','tower-vortex'].includes(h.kind) || h.kind.startsWith('pet-')) {
     c.save(); circle(c,h.x,h.y,h.r); c.fillStyle = time < h.at ? 'rgba(160,70,180,.15)' : h.kind.includes('roots') || h.kind.includes('chain') ? 'rgba(68,108,42,.6)' : h.kind.includes('lava') || h.kind.includes('wildfire') ? 'rgba(194,74,35,.55)' : h.kind.includes('whirlpool') || h.kind.includes('ice') ? 'rgba(44,100,158,.65)' : 'rgba(118,44,140,.55)'; c.fill(); c.strokeStyle = '#b083ba'; c.lineWidth = 4; c.stroke(); c.restore(); return;
   }
 

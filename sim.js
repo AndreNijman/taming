@@ -6,7 +6,7 @@ import {
   xpForAge, totalXp, biomeState, MAX_AGE, LAST_CHOICE_AGE, ageChoices, typeMultiplier,
 } from './data.js';
 
-import { abilityStats, abilityCooldown, castAbility, updateAbility, abilityProjectileHit, abilityHazardTick } from './pet-abilities.js';
+import { abilityStats, abilityCooldown, castAbility, updateAbility, abilityProjectileHit, abilityHazardTick, abilityBlocksProjectile } from './pet-abilities.js';
 import { accessory, equippedHat, statusImmune, incomingMultiplier, outgoingMultiplier, weaponMultiplier, rangedMultiplier, updateEffects } from './equipment.js';
 
 export const PLAYER_R = 35;
@@ -293,7 +293,7 @@ function buyHat(world, p, hatId) {
   p.hat = hatId;
 }
 const hat = p => equippedHat(p, p.simTime ?? 0);
-const combatApi = { hurt, heal, hitStructure, emit, collide, hat, statusImmune };
+const combatApi = { hurt, heal, hitStructure, emit, collide, hat, statusImmune, outgoingMultiplier };
 
 // ---------------- taming ----------------
 
@@ -493,6 +493,7 @@ function collide(world, e, harmless = false) {
     const k = kindOf(s);
     if (k === 'wall' || k === 'door') pushOutBox(e, s); else pushOut(e, s, s.r);
   }
+  if(!e.boss)for(const boss of world.animals||[])if(boss.boss&&!boss.dead)pushOut(e,boss,boss.r);
   e.x = clamp(e.x, e.r, WORLD.w - e.r); e.y = clamp(e.y, e.r, WORLD.h - e.r);
 }
 function pushOut(e, o, or) {
@@ -547,7 +548,7 @@ function hurt(world, t, amt, by, opts = {}) {
   t.hitAt = world.time;
   t.lastHurtAt = world.time;
   const kb = opts.kb ?? 1;
-  if (by && kb && !t.boss) {
+  if (by && kb && !t.boss && !statusImmune(world,t,opts.element,by,'push')) {
     const ang = Math.atan2(t.y - by.y, t.x - by.x), push = (opts.knock ?? 70) * 12 * kb * (t.items ? 1 / (hat(t).weight || 1) : .6);
     t.vx += Math.cos(ang) * push; t.vy += Math.sin(ang) * push;
   }
@@ -649,7 +650,7 @@ function destroyStructure(world, s) {
 function petDamageVs(a, t) {
   const def = PET_BY_ID.get(a.species);
   const tdef = t.boss ? BOSS_BY_ID.get(t.boss) : t.species ? PET_BY_ID.get(t.species) : null;
-  const m = tdef ? def.types.reduce((acc, ty) => Math.max(acc, typeMultiplier(ty, tdef.types)), 0) : 1;
+  const m = tdef ? typeMultiplier(def.types, tdef.types) : 1;
   return { mult: (m || 1) * (a.mountBuff === 'battle' ? 1.2 : 1) };
 }
 
@@ -680,10 +681,15 @@ function swing(world, p, it) {
   const dmgMul = weaponMultiplier(world,p,it);
   const punchBonus = ['hand','gloves'].includes(it.family) ? hat(p).punchBonus || 0 : 0;
   let hitPlayer = null;
-  const combo = target => { if(it.family!=='gloves')return; p.comboTarget===target.id?p.comboCount++:(p.comboTarget=target.id,p.comboCount=1);if(p.comboCount>=3){p.comboCount=0;if(world.random()<Math.min(1,(hat(p).knockout||.25)+(accessory(p).knockout||0))){target.trappedUntil=world.time+1.5;target.skillBlockedUntil=world.time+1.5;}} };
+  const combo = target => {
+    if(it.family!=='gloves')return;
+    if(p.comboTarget===target.id && world.time-(p.comboAt||0)<2)p.comboCount++;else{p.comboTarget=target.id;p.comboCount=1;}
+    p.comboAt=world.time;
+    if(p.comboCount===5){p.comboCount=0;if(!statusImmune(world,target,'combat',p)){target.trappedUntil=world.time+1.5;target.skillBlockedUntil=world.time+1.5;target.attackBlockedUntil=world.time+1.5;target.cast=null;}}
+  };
   for (const a of world.animals) {
     if (a.dead || a.owner === p.id || !inArc(a, a.r)) continue;
-    hurt(world, a, ((it.adm || it.dmg) + punchBonus) * dmgMul, p, { knock: it.knock * (hat(p).knock || 1) });
+    hurt(world, a, ((it.family==='gloves'?it.dmg*1.4:it.adm || it.dmg) + punchBonus) * dmgMul, p, { knock: it.knock * (hat(p).knock || 1) });
     combo(a);
     if (a.owner) hitPlayer = hitPlayer || world.players[a.owner];
     else if (!a.boss) hitPlayer = hitPlayer || a;
@@ -734,7 +740,7 @@ function place(world, p, it) {
   pay(p, it.cost);
   const s = { id: `s${world.nextId++}`, item: it.id, x: Math.round(x), y: Math.round(y), r: it.r, rot: it.kind === 'boost' ? p.angle : 0, hp: it.hp, maxHp: it.hp, owner: p.id, cd: 0, aim: p.angle, born: world.time, decay: !!hat(p).decay };
   world.structures.push(s);
-  for (const e of [...Object.values(world.players), ...world.animals]) if (!e.dead && blocks(s, e)) { pushOut(e, s, s.r); collide(world, e); }
+  for (const e of [...Object.values(world.players), ...world.animals]) if (!e.dead && !e.boss && blocks(s, e)) { pushOut(e, s, s.r); collide(world, e); }
   emit(world, { k: 'place', by: p.id, x: s.x, y: s.y, item: it.id });
   return true;
 }
@@ -793,7 +799,8 @@ function moveSpeed(world, p, it) {
   if (h.allBiomes || h.biome === world.biome) s *= h.biomeSpeed || 1.15;
   if (it?.catch) s *= h.netSpeed || 1;
   if (accessory(p).slow) s *= 1-accessory(p).slow;
-  if (mount?.cast && ['blaze','vines','ice-shield','glacier','rampart','burst','fire-blast','lock','magma-heal'].includes(mount.cast.kind)) s=0;
+  if(mount?.cast&&['spit','fire-blast'].includes(mount.cast.kind))s=Math.max(0,s+(abilityStats(mount).speed_bonus||0));
+  if (mount?.cast && ['blaze','vines','ice-shield','glacier','rampart','burst','fire-ball','plant-ball','water-ball','lock','magma-heal'].includes(mount.cast.kind)) s=0;
   if (world.time < p.trappedUntil) s = 0;
   return s;
 }
@@ -805,7 +812,8 @@ export function moveTamer(world, p, inp, speed, dt, harmless = false) {
   const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
   const boosting = !harmless && world.time < (p.boostUntil || 0);
   if (boosting) { p.vx = Math.cos(p.boostAngle) * (p.boostSpeed||1100); p.vy = Math.sin(p.boostAngle) * (p.boostSpeed||1100); }
-  const accel = boosting ? 0 : 1 - Math.exp(-dt * 10);
+  const slippery=p.effects?.some(e=>e.kind==='slippery'&&e.until>world.time);
+  const accel = boosting ? 0 : 1 - Math.exp(-dt * (slippery?1.5:10));
   p.vx += (mx * speed - p.vx) * accel; p.vy += (my * speed - p.vy) * accel;
   p.x += p.vx * dt; p.y += p.vy * dt;
   collide(world, p, harmless);
@@ -849,7 +857,7 @@ function updatePlayer(world, p, dt) {
     if (it.slot === 'food') { if (!eat(world, p)) p.cd = world.time + .2; }
     else if (it.kind) { if (place(world, p, it)) p.actionAt = world.time; else p.cd = world.time + .2; }
     else if (it.catch) {
-      for (const n of nearbyResources(world,p.x,p.y,it.range+p.r)) if(n.type==='insect' && dist(n,p)<it.range+p.r) { n.hp=0;n.respawnAt=world.time+45;const catches=world.random()<(hat(p).duplicate||0)?2:1;gainXp(world,p,75*catches);gainGold(p,20*catches);p.insects=(p.insects||0)+catches;emit(world,{k:'gather',id:n.id,by:p.id,res:'gold',amt:20,ang:p.angle,x:n.x,y:n.y}); } p.actionAt=world.time;
+      for (const n of nearbyResources(world,p.x,p.y,it.range+p.r)) if(n.type==='insect' && dist(n,p)<it.range+p.r) { n.hp=0;n.respawnAt=world.time+45/(hat(p).insectLuck||1);const catches=world.random()<(hat(p).duplicate||0)?2:1;gainXp(world,p,75*catches);gainGold(p,20*catches);p.insects=(p.insects||0)+catches;emit(world,{k:'gather',id:n.id,by:p.id,res:'gold',amt:20,ang:p.angle,x:n.x,y:n.y}); } p.actionAt=world.time;
     }
     else if (it.mount) {
       const mount = world.animals.find(a=>a.owner===p.id && a.stage===2 && PET_BY_ID.get(a.species).mountable && !a.dead && dist(a,p)<it.range);
@@ -876,6 +884,7 @@ function updateAnimal(world, a, dt) {
   const def = PET_BY_ID.get(a.species);
   const st = petStats(def, a.stage);
   st.speed *= a.effectSpeed ?? 1;
+  if(a.cast&&['spit','fire-blast'].includes(a.cast.kind))st.speed=Math.max(0,st.speed+(abilityStats(a).speed_bonus||0));
   if (a.decoy) { if(world.time>=a.expiresAt){a.dead=true;world.animals=world.animals.filter(x=>x!==a);} return; }
   if (world.time<(a.boostUntil||0)) { const speed=a.boostSpeed||1100;a.vx=Math.cos(a.boostAngle)*speed;a.vy=Math.sin(a.boostAngle)*speed;a.x+=a.vx*dt;a.y+=a.vy*dt;collide(world,a);return;}
   if (updateAbility(world,a,dt,combatApi)) return;
@@ -1003,7 +1012,7 @@ function updateBoss(world,a,dt) {
   if(a.sleep)return;
   const targets=[...Object.values(world.players).filter(p=>!p.dead&&world.time>=p.shieldUntil),...world.animals.filter(t=>t.owner&&!t.dead)];
   const near=targets.filter(t=>dist(t,a)<950);
-  if(world.time-a.lastHurtAt>25&&!near.length){a.sleep=true;a.pending=null;a.attackTimers=null;return;}
+  if(world.time-a.lastHurtAt>25&&!near.length){a.sleep=true;a.pending=null;a.pendingAttacks=[];a.attackTimers=null;return;}
   a.attackTimers ||= def.attacks.map((attack,i)=>world.time+i*2);
   a.pendingAttacks ||= [];
   for(const pending of [...a.pendingAttacks])if(world.time>=pending.at){
@@ -1012,7 +1021,7 @@ function updateBoss(world,a,dt) {
     if(['slam','flame-slam'].includes(kind)){
       for(const t of [...targets,...world.structures]){
         if(dist(t,a)>(attack.reach||400)+(t.r||0))continue;
-        if(t.item)hitStructure(world,t,attack.damage*3,a);
+        if(t.item)hitStructure(world,t,attack.buildingDamage||attack.damage*10,a);
         else {hurt(world,t,attack.damage,a,{element:attack.element,skill:true,knock:120});if(attack.burn&&!statusImmune(world,t,attack.element))t.effects=[...(t.effects||[]),{key:`${a.id}:burn`,kind:'burn',until:world.time+3,value:attack.burn,element:attack.element,by:a.id}];}
       }
       emit(world,{k:'impact',x:a.x,y:a.y});
@@ -1033,7 +1042,7 @@ function updateBoss(world,a,dt) {
   while(wave>a.waves){
     a.waves++;
     const stages=a.waves===1?[1,1,1]:a.waves===2?[2,1,1]:[2,2,2];
-    if(a.boss==='frost-golem'&&a.waves===1)stages.pop();
+    if(a.boss==='frost-golem'){if(a.waves===1)stages.pop();else if(a.waves===2)stages.splice(0,stages.length,2,1);else stages.splice(0,stages.length,2,2,1);}
     for(const [i,stage]of stages.entries()){
       const id=def.drops[i%def.drops.length],m=spawnAnimal(world,PET_BY_ID.get(id),stage,{x:a.x+Math.cos(i*2.1)*(a.r+90),y:a.y+Math.sin(i*2.1)*(a.r+90)});
       m.sleep=false;m.angry=true;m.state='chase';m.target=near[0]?.id||null;
@@ -1117,20 +1126,29 @@ function updateStructures(world, dt) {
         break;
       case 'turret': case 'tower': {
         if (world.time < s.cd) break;
-        if(it.towerElement==='repair'){s.cd=world.time+it.every;for(const ally of world.structures)if(ally!==s&&ally.owner===s.owner&&dist(ally,s)<it.range)ally.hp=Math.min(ally.maxHp,ally.hp+it.dmg);break;}
+        if(['normal','repair'].includes(it.towerElement)){
+          s.cd=world.time+it.every;s.shotAt=world.time;
+          if(it.towerElement==='repair')for(const ally of world.structures)if(ally!==s&&ally.owner===s.owner&&dist(ally,s)<it.range)ally.hp=Math.min(ally.maxHp,ally.hp+it.dmg);
+          for(const t of [...Object.values(world.players),...world.animals])if(!t.dead&&t.id!==s.owner&&t.owner!==s.owner&&dist(t,s)<it.range){const d=dist(t,s)||1;t.vx+=(t.x-s.x)/d*600;t.vy+=(t.y-s.y)/d*600;if(it.towerElement==='normal')hurt(world,t,it.dmg,{...s,id:s.owner},{element:'normal',kb:0});}
+          emit(world,{k:'impact',x:s.x,y:s.y});break;
+        }
+        if(it.towerElement==='water'){
+          const ally=[owner,...world.animals.filter(a=>a.owner===s.owner)].filter(t=>t&&!t.dead&&t.hp<t.maxHp&&dist(t,s)<it.range).sort((a,b)=>a.hp/a.maxHp-b.hp/b.maxHp)[0];
+          if(ally){const angle=Math.atan2(ally.y-s.y,ally.x-s.x);s.aim=angle;s.cd=world.time+it.every;s.shotAt=world.time;world.projectiles.push({id:`j${world.nextId++}`,x:s.x,y:s.y,vx:Math.cos(angle)*700,vy:Math.sin(angle)*700,owner:s.owner,tower:s.id,heal:50,element:'water',kind:'waterball',until:world.time+it.range/700,r:18,dmg:it.dmg});break;}
+        }
         let best = null, bd = it.range ** 2;
         for (const t of Object.values(world.players)) {
           if (t.dead || t.id === s.owner || world.time < t.shieldUntil) continue;
           const d = dist2(t, s); if (d < bd) { bd = d; best = t; }
         }
         for (const t of world.animals) {
-          if (t.dead || t.owner === s.owner) continue;
+          if (t.dead || t.owner === s.owner || !t.boss&&it.kind==='tower'&&!t.owner&&t.stage===0&&!t.angry) continue;
           const d = dist2(t, s); if (d < bd) { bd = d; best = t; }
         }
         if (best) {
           s.aim = Math.atan2(best.y - s.y, best.x - s.x); s.cd = world.time + it.every; s.shotAt = world.time;
           const speed = it.kind === 'tower' ? 700 : 1000;
-          world.projectiles.push({ id: `j${world.nextId++}`, x: s.x + Math.cos(s.aim) * 50, y: s.y + Math.sin(s.aim) * 50, vx: Math.cos(s.aim) * speed, vy: Math.sin(s.aim) * speed, dmg: it.dmg, element:it.element, owner: s.owner, until: world.time + it.range / speed, r: it.kind === 'tower' ? 16 : 10, kind: it.kind === 'tower' ? 'fireball' : 'ball' });
+          world.projectiles.push({ id: `j${world.nextId++}`, x: s.x + Math.cos(s.aim) * 50, y: s.y + Math.sin(s.aim) * 50, vx: Math.cos(s.aim) * speed, vy: Math.sin(s.aim) * speed, dmg: it.dmg, buildingDamage:it.element==='rock'?it.dmg*4:it.dmg, element:it.element, tower:s.id, owner: s.owner, until: world.time + it.range / speed, r: it.kind === 'tower' ? 16 : 10, kind: it.kind === 'tower' ? it.element==='water'?'waterball':it.element==='plant'?'plantball':it.element==='ice'?'iceball':it.element==='shadow'?'shadowball':it.element==='rock'?'rockball':'fireball' : 'ball' });
         }
         break;
       }
@@ -1144,17 +1162,25 @@ function updateProjectiles(world, dt) {
     j.x += j.vx * dt; j.y += j.vy * dt;
     if(j.ability==='lava-spit' && world.time>=(j.trailAt||0)){j.trailAt=world.time+.15;world.hazards.push({id:`h${world.nextId++}`,kind:'pet-lava',x:j.x,y:j.y,r:45,at:world.time,until:world.time+3,owner:j.owner,caster:j.caster});}
     if (world.time > j.until) continue;
-    let hit = false;
+    let hit = abilityBlocksProjectile(world,j);
     for (const n of nearbyResources(world, j.x, j.y, 140)) if (RESOURCE_TYPES[n.type].solid !== false && (n.x - j.x) ** 2 + (n.y - j.y) ** 2 < (n.r * .85) ** 2) { hit = true; break; }
+    if(j.piercing && !hit){
+      for(const t of [...Object.values(world.players),...world.animals,...world.structures]){
+        if(t.dead||t.hp<=0||t.id===j.caster||j.ability!=='water-ball'&&(t.id===j.owner||t.owner===j.owner))continue;
+        if(dist(t,j)>(t.r||0)+j.r||world.time<(j.hitTimes[t.id]||0))continue;
+        const tick=!!j.hitTimes[t.id];j.hitTimes[t.id]=world.time+.5;abilityProjectileHit(world,j,t,combatApi,tick);
+      }
+      keep.push(j);continue;
+    }
     const by = { x: j.x - j.vx * .05, y: j.y - j.vy * .05, id: j.owner, owner: j.owner };
     const it = j.item ? item(j.item) : null;
     if (!hit) for (const s of world.structures) {
       if (s.owner === j.owner || !SOLID.has(kindOf(s))) continue;
       if ((s.x - j.x) ** 2 + (s.y - j.y) ** 2 < s.r ** 2 && j.caster) { abilityProjectileHit(world,j,s,combatApi);hit=true;break; }
-      if ((s.x - j.x) ** 2 + (s.y - j.y) ** 2 < s.r ** 2) { hitStructure(world, s, it?.bdm || 2, by); hit = true; break; }
+      if ((s.x - j.x) ** 2 + (s.y - j.y) ** 2 < s.r ** 2) { hitStructure(world, s, j.buildingDamage || it?.bdm || 2, by); hit = true; break; }
     }
     if (!hit) for (const t of [...Object.values(world.players), ...world.animals]) {
-      if (t.dead || t.hp <= 0 || t.id === j.owner || t.owner === j.owner || j.boss && !t.items && !t.owner) continue;
+      if (t.dead || t.hp <= 0 || !j.heal&&!it?.healPet&&(t.id === j.owner || t.owner === j.owner) || j.boss && !t.items && !t.owner) continue;
       if ((t.x - j.x) ** 2 + (t.y - j.y) ** 2 >= (t.r + j.r) ** 2) continue;
       hit = true;
       projectileHit(world, j, it, t, by);
@@ -1167,6 +1193,8 @@ function updateProjectiles(world, dt) {
 
 function projectileHit(world, j, it, t, by) {
   const shooter = world.players[j.owner];
+  if(j.heal&&(t.id===j.owner||t.owner===j.owner)){heal(world,t,j.heal);return;}
+  if(j.element==='shadow')world.hazards.push({id:`h${world.nextId++}`,kind:'tower-vortex',x:t.x,y:t.y,r:130,at:world.time,until:world.time+3,owner:j.owner,element:'shadow',dmg:3});
   if(j.caster){abilityProjectileHit(world,j,t,combatApi);return;}
   // taming tools: matching tool on a sleeping wild baby raises the tame chance
   if (it?.tameTool && t.sleep && !t.owner) {
@@ -1184,11 +1212,11 @@ function projectileHit(world, j, it, t, by) {
   if (it?.healPet) { if (t.items) heal(world, t, it.healPlayer*(shooter?hat(shooter).appleHeal||1:1)); else heal(world, t, it.healPet*(shooter?hat(shooter).appleHeal||1:1)); return; }
   if (t.owner === j.owner) return;
   if(it?.family==='blowpipe'&&!statusImmune(world,t,'normal')){t.blindUntil=world.time+1.5;t.slowUntil=world.time+1.5;t.skillBlockedUntil=world.time+1;if(!t.items&&t.stage===0&&!t.owner){t.sleep=true;t.angry=false;t.target=null;t.state='wander';t.wakeAt=world.time+10;return;}}
-  const dmg = (j.dmg ?? (t.items ? it?.dmg : it?.adm) ?? 10) * (shooter&&it?rangedMultiplier(world,shooter,it):1);
+  const dmg = (j.dmg ?? (t.items ? it?.dmg : it?.fairyDamage&&PET_BY_ID.get(t.species)?.types.includes('fairy')?it.fairyDamage:it?.adm) ?? 10) * (shooter&&it?rangedMultiplier(world,shooter,it):1);
   const dealt = hurt(world, t, dmg, by, { knock: j.kind === 'fireball' ? 40 : 20, kind: j.kind === 'fireball' ? 'burn' : 'hit', element: j.element, skill:!!j.boss });
   if(j.element==='ice'&&dealt&&!statusImmune(world,t,'ice'))t.trappedUntil=world.time+.5;
   if(j.element==='electric'&&dealt&&!statusImmune(world,t,'electric'))t.skillBlockedUntil=world.time+1;
-  if(j.element==='plant'&&dealt&&shooter)heal(world,shooter,dealt*.2);
+  if(j.element==='plant'&&dealt){const tower=world.structures.find(s=>s.id===j.tower);if(shooter&&dist(shooter,j)<900)heal(world,shooter,dealt*.2);else if(tower)tower.hp=Math.min(tower.maxHp,tower.hp+dealt*.2);}
   if (j.kind === 'fireball' && j.element!=='normal' && t.items && dealt && !statusImmune(world,t,'fire')) t.burn = 3;
   if (shooter && dealt) for (const id of shooter.pets) { const a = world.animals.find(x => x.id === id); if (a && a.mode !== 'stop' && !a.lockedTarget) a.target = t.owner ? t.owner : t.id; }
 }
@@ -1206,17 +1234,19 @@ function updateHazards(world, dt) {
     if(h.kind.startsWith('pet-')){if(world.time>=h.until)continue;keep.push(h);if(world.time>=(h.tickAt||0)){h.tickAt=world.time+.5;abilityHazardTick(world,h,combatApi);}continue;}
     if(h.kind==='warning')continue;
     const source=world.animals.find(a=>a.id===h.owner)||{x:h.x,y:h.y,id:h.owner},attack=h.attack||{};
-    const persistent=['poison','roots','whirlpool','toxic-fog','lava-pool'].includes(h.kind);
+    const persistent=['poison','roots','whirlpool','toxic-fog','lava-pool','tower-vortex'].includes(h.kind);
     if(persistent){if(world.time>=h.until)continue;keep.push(h);if(world.time<(h.tickAt||0))continue;h.tickAt=world.time+(attack.tick||.5);}
     for(const t of [...Object.values(world.players),...world.animals,...world.structures]){
-      if(t.dead||t.boss||t.sleep||h.owner&&!t.items&&!t.owner&&!t.item)continue;
+      if(t.dead||h.kind!=='tower-vortex'&&(t.boss||t.sleep||h.owner&&!t.items&&!t.owner&&!t.item))continue;
       if(dist(t,h)>=h.r+(t.r||0)*.5)continue;
       const damage=t.items? h.dmg||0 : attack.animalDamage||h.dmg||0;
+      if(h.kind==='tower-vortex'&&(t.id===h.owner||t.owner===h.owner))continue;
+      if(h.kind==='tower-vortex'&&!t.item&&!t.boss){const d=dist(t,h)||1;t.vx+=(h.x-t.x)/d*350;t.vy+=(h.y-t.y)/d*350;}
       const dealt=t.item?(hitStructure(world,t,damage*2,source),damage):hurt(world,t,damage,source,{kind:h.kind==='poison'||h.kind==='toxic-fog'?'poison':h.element||'hit',kb:persistent?0:1,knock:attack.knock||120,element:h.element,skill:true});
       const immune=!t.item&&statusImmune(world,t,h.element,source);
       if(attack.vampirism&&source.hp)source.hp=Math.min(source.maxHp,source.hp+dealt*attack.vampirism);
       if(h.kind==='roots'&&!immune&&!t.item){t.slowUntil=world.time+1;}
-      if(attack.pull&&!t.item){const d=dist(t,h)||1;t.vx+=(h.x-t.x)/d*attack.pull;t.vy+=(h.y-t.y)/d*attack.pull;}
+      if(attack.pull&&!t.item&&!statusImmune(world,t,h.element,source,'pull')){const d=dist(t,h)||1;t.vx+=(h.x-t.x)/d*attack.pull;t.vy+=(h.y-t.y)/d*attack.pull;}
       if(!immune&&!t.item){
         if(attack.freeze||attack.stun){t.trappedUntil=world.time+(attack.freeze||attack.stun);t.skillBlockedUntil=t.trappedUntil;}
         if(attack.blind)t.blindUntil=world.time+attack.blind;
@@ -1341,7 +1371,7 @@ export function snapshot(world, selfId) {
     a: world.animals.filter(a => !a.dead && (a.owner === selfId || inView(a, c, a.r + 100))).map(encodeAnimal),
     s: world.structures.filter(s => inView(s, c, 120)).map(encodeStructure),
     j: world.projectiles.filter(j => inView(j, c, 200)).map(encodeProjectile),
-    h: world.hazards.map(h => [h.id, R(h.x), R(h.y), h.r, T(h.at), h.kind, T(h.until || 0), h.owner || null]),
+    h: world.hazards.map(h => [h.id, R(h.x), R(h.y), h.r, T(h.at), h.kind, T(h.until || 0), h.owner || null, A(h.angle||0), h.shape||null, h.width||0]),
     boss: world.animals.filter(a => a.boss && !a.dead).map(a => [R(a.x), R(a.y), Math.round(a.hp / a.maxHp * 100) / 100, a.boss, a.sleep ? 1 : 0]),
   };
 }

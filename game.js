@@ -316,7 +316,7 @@ function decodeSnap(s) {
   for (const r of s.j) { const j = S.decodeProjectile(r); projectiles.set(j.id, j); }
   return {
     time: s.time, biome: s.biome || biomeState(s.time).biome.id, activeEvent:s.activeEvent||null, resources: s.r || [], chests: s.chests || [], me: s.me, players, animals, projectiles,
-    structures: s.s.map(S.decodeStructure), hazards: s.h.map(([id, x, y, r, at, kind, until, owner]) => ({ id, x, y, r, at, kind, until, owner })), boss: s.boss || [],
+    structures: s.s.map(S.decodeStructure), hazards: s.h.map(([id, x, y, r, at, kind, until, owner, angle, shape, width]) => ({ id, x, y, r, at, kind, until, owner, angle, shape, width })), boss: s.boss || [],
   };
 }
 function pushSnap(snap) {
@@ -342,7 +342,7 @@ function pushSnap(snap) {
 }
 // Online, this player's tamer moves at once by the sim's own movement step (predict.js); the
 // relay's snapshots correct it. The mirror is what the client knows to collide with.
-const mirror = () => ({ grid: game.grid, structures: game.cur?.structures || [] });
+const mirror = () => ({ grid: game.grid, structures: game.cur?.structures || [], animals:[...(game.cur?.animals?.values()||[])] });
 function sendInputs(dt) {
   game.netAcc = Math.min(game.netAcc + dt, S.TICK * 4);
   while (game.netAcc >= S.TICK) {

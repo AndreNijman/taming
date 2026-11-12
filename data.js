@@ -1,4 +1,6 @@
-import { ITEM_REFERENCE } from './reference-items.js';
+import { ITEM_REFERENCE as BASE_ITEM_REFERENCE } from './reference-items.js';
+import { TABLE_ITEMS } from './reference-tables.js';
+const ITEM_REFERENCE=Object.fromEntries([...new Set([...Object.keys(BASE_ITEM_REFERENCE),...Object.keys(TABLE_ITEMS)])].map(name=>{const base=BASE_ITEM_REFERENCE[name]||{},table=TABLE_ITEMS[name]||{};return [name,{...base,...table,properties:{...base.properties,...table.properties},recipe:table.recipe||base.recipe}];}));
 import { BOSS_PROFILES } from './boss-data.js';
 import { ANIMAL_REFERENCE } from './reference-animals.js';
 import { EQUIPMENT_HATS, EQUIPMENT_ACCESSORIES } from './equipment-data.js';
@@ -241,10 +243,10 @@ BUILDINGS.push(
 );
 const bigBoost=BUILDINGS.find(b=>b.id==='big-boost-pad');bigBoost.hp=1000;bigBoost.cost={wood:40,stone:40,gold:200};
 // Upgrade the normal magic tower into its elemental or repair branch at age 9.
-const normalTower=BUILDINGS.find(it=>it.id==='fire-tower');normalTower.name='Normal Magic Tower';normalTower.element='normal';normalTower.towerElement='normal';
-for(const [k,tier]of ['stone','gold','ruby','amethyst','sapphire'].entries())for(const element of ['fire','ice','plant','electric','repair']){
+const normalTower=BUILDINGS.find(it=>it.id==='fire-tower');normalTower.name='Normal Magic Tower';normalTower.element='normal';normalTower.towerElement='normal';normalTower.hp=140;normalTower.every=8;normalTower.cost={wood:70,stone:20};
+for(const [k,tier]of ['stone','gold','ruby','amethyst','sapphire'].entries())for(const element of ['fire','ice','plant','electric','repair','rock','water','shadow']){
   if(element==='fire'){const existing=BUILDINGS.find(it=>it.id===`${tier}-tower`);if(existing){existing.towerElement=element;continue;}}
-  BUILDINGS.push(build(`${tier}-${element}-tower`,`${TIERS[tier].name} ${element[0].toUpperCase()+element.slice(1)} Tower`,'tower',tier,{wood:80,stone:30,gold:50+k*40},300+k*80,1,{r:44,dmg:22+k*4,every:7,range:600,element,towerElement:element}));
+  BUILDINGS.push(build(`${tier}-${element}-tower`,`${TIERS[tier].name} ${element==='shadow'?'Spectrum':element[0].toUpperCase()+element.slice(1)} Tower`,'tower',tier,{wood:80,stone:30,gold:50+k*40},300+k*80,1,{r:44,dmg:22+k*4,every:7,range:600,element,towerElement:element}));
 }
 const bigBase=BUILDINGS.find(it=>it.id==='big-spike');bigBase.reference='Stone Big Spike';bigBase.hp=600;bigBase.touch=2;bigBase.cost={stone:25};
 for(const [k,tier]of ['gold','ruby','amethyst','sapphire'].entries())BUILDINGS.push(build(`${tier}-big-spike`,`${TIERS[tier].name} Big Spike`,'spike',tier,{wood:20,stone:20+k*5,gold:40+k*20},700+k*100,12,{r:54,touch:2+k,big:true}));
@@ -257,14 +259,14 @@ for (const it of ITEMS) {
   const tier = it.tier === 'wood' ? 'Wooden' : it.tier === 'gold' ? 'Golden' : title(it.tier);
   let name = it.id==='hand'?'Hand':it.slot==='primary'?`${tier} ${title(it.variant ? VARIANT[it.family].id : it.family)}`:it.slot==='secondary'?`${tier} ${title(it.variantId || (it.shape==='crossbow'?'crossbow':it.family))}`:it.name;
   if(it.kind && !['ice-rampart','fire-tower'].includes(it.id))name=`${tier} ${title(it.kind)}`;
-  if(it.kind==='tower')name=`${tier} ${title(it.towerElement||'fire')} Tower`;
-  if(it.id==='fire-tower')continue;
+  if(it.kind==='tower')name=`${tier} ${title(it.towerElement==='shadow'?'spectrum':it.towerElement||'fire')} Tower`;
+  if(it.id==='fire-tower')name='Normal Magic Tower';
   if(it.big && it.kind==='spike')name=`${it.tier==='stone'?'Stone':tier} Big Spike`;
   if(['boost','heal','trap'].includes(it.kind))name=it.name;
   const ref=ITEM_REFERENCE[name] || (['amber','diamond','emerald'].includes(it.tier) ? ITEM_REFERENCE[name.replace(tier,'Sapphire')] : null);if(!ref)continue;
-  it.reference=name;it.source='https://tamingio.fandom.com/wiki/Module:Items/data';
+  it.reference=name;it.source=ref.source||'https://tamingio.fandom.com/wiki/Module:Items/data';
   const v=ref.properties||{};
-  for(const [field,key]of Object.entries({speed:'speed',dmg:'player_damage',adm:'animal_damage',bdm:'building_damage',range:'range',knock:'knockback',hp:'durability',limit:'maximum',heal:'heal',healPlayer:'player_heal',healPet:'animal_heal'}))if(typeof v[key]==='number')it[field]=v[key];
+  for(const [field,key]of Object.entries({speed:'speed',dmg:'player_damage',adm:'animal_damage',bdm:'building_damage',range:'range',knock:'knockback',hp:'durability',limit:'maximum',heal:'heal',healPlayer:'player_heal',healPet:'animal_heal',fairyDamage:'fairy_damage'}))if(typeof v[key]==='number')it[field]=v[key];
   if(typeof v.damage==='number'){it.dmg=v.player_damage??v.damage;it.adm=v.animal_damage??v.damage;}
   if(it.slot==='primary'&&it.family==='hand')it.adm=it.dmg;
   if(it.slot==='primary')it.harvest={wood:1,stone:1,food:1,gold:1,...ref.harvest};
@@ -316,7 +318,7 @@ function secondaryAtTier(items, tier) {
   const cur = slotItem(items, 'secondary');
   if (!cur) return [`${tier}-bow`, `${tier}-shield`, `${tier}-wrench`, `${tier}-blowpipe`].filter(id => ITEM_BY_ID.has(id));
   // The branch is selected at gold and stays selected at later ages.
-  const branches = tier === 'gold' ? cur.family === 'bow' ? ['bow','crossbow','musket','minigun'] : cur.family === 'shield' ? ['shield','crystal-shield','spike-shield'] : ['wrench'] : [cur.variantId || cur.shape];
+  const branches = tier === 'gold' ? cur.family === 'bow' ? ['bow','crossbow','musket','minigun'] : cur.family === 'shield' ? ['shield','crystal-shield','spike-shield'] : cur.family==='blowpipe'?['blowpipe']:['wrench'] : [cur.variantId || cur.shape];
   return branches.map(branch => `${tier}-${branch}`).filter(id => ITEM_BY_ID.has(id));
 }
 const cosmetics = (items, slot) => { const cur = slotItem(items, slot); return cur?.tier === 'sapphire' ? ['amber','diamond','emerald'].map(t => cur.id.replace('sapphire-', `${t}-`)) : []; };
@@ -324,7 +326,7 @@ function buildingTier(items) {
   const selected = items.map(id => ITEM_BY_ID.get(id)).filter(it => ['spike','windmill','door','turret','tower'].includes(it.kind) && (it.tier !== 'wood' || ['tower','turret'].includes(it.kind))).sort((a,b)=>tierRank(b.tier)-tierRank(a.tier))[0];
   if (!selected) return [];
   if (selected.tier === 'sapphire') return cosmetics(items, selected.slot);
-  if(selected.kind==='tower'&&selected.towerElement==='normal')return ['fire','ice','plant','electric','repair'].map(element=>`stone-${element==='fire'?'tower':element+'-tower'}`);
+  if(selected.kind==='tower'&&selected.towerElement==='normal')return ['fire','ice','plant','electric','repair','rock','water','shadow'].map(element=>`stone-${element==='fire'?'tower':element+'-tower'}`);
   const next = nextTier(items, selected.slot);
   return next ? [next] : [];
 }
@@ -412,11 +414,11 @@ TYPES['ancient'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['ancient'].s
 export function typeMultiplier(attacker, defender) {
   if (!attacker || !defender) return 1;
   let m = 1;
-  for (const d of defender) {
-    if (TYPES[attacker].strong.includes(d)) m *= 2;
-    else if (TYPES[attacker].weak.includes(d)) m *= .5;
+  for (const attackType of Array.isArray(attacker)?attacker:[attacker])for (const d of defender) {
+    if (TYPES[attackType]?.strong.includes(d)) m *= 2;
+    else if (TYPES[attackType]?.weak.includes(d)) m *= .5;
   }
-  return Math.max(.25, Math.min(4, m));
+  return Math.max(1/3, Math.min(3, m));
 }
 
 // Skills: one per pet, cast with the skill key. Cooldown shortens as the pet grows.
