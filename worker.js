@@ -7,7 +7,7 @@ import { verifyDevPass } from './netdev.js';
 
 const ROOM_TTL = 45 * 60_000, LB_MS = 1000;
 const ADOPT_WAIT_MS = 6000, MOVE_CLOSE_MS = 1000; // a moved room waits this long for its players; the old one closes their sockets after this
-const COMMANDS = new Set(['choose', 'tame', 'eat', 'respawn', 'skill', 'pets', 'hat', 'release']);
+const COMMANDS = new Set(['choose', 'tame', 'eat', 'respawn', 'skill', 'pets', 'hat', 'accessory', 'release']);
 const GLOBAL_EVENTS = new Set(['boss', 'death']);
 const DEV_HOST = 'wildbound.andrenijman.com'; // dev passes (netdev.js) are only valid for this host
 const encoder = new TextEncoder();
@@ -132,6 +132,7 @@ export class GameRoom {
         const c = message.c;
         if (this.started && c && typeof c === 'object' && COMMANDS.has(c.t)) {
           const clean = { t: c.t, id: typeof c.id === 'string' ? c.id.slice(0, 40) : undefined, mode: typeof c.mode === 'string' ? c.mode.slice(0, 10) : undefined };
+          if (typeof c.target === 'string') clean.target = c.target.slice(0, 64);
           if (Number.isInteger(c.slot)) clean.slot = clamp(c.slot, -1, 2);
           if (Number.isFinite(c.x) && Number.isFinite(c.y)) { clean.x = clamp(c.x, 0, this.world.w); clean.y = clamp(c.y, 0, this.world.h); }
           S.command(this.world, session.id, clean);

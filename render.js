@@ -95,9 +95,13 @@ export function drawResource(c, node, season = BIOME_BY_ID[node.biome] || BIOMES
   c.translate(node.x + shake * Math.cos(node.hitDir || 0), node.y + shake * Math.sin(node.hitDir || 0));
   const r = node.r;
   switch (node.type) {
+    case 'insect':
+      for(const side of [-1,1]) { ellipse(c,side*9,Math.sin(time*8)*3,10,7); ink(c,'#e1b956',2); } ellipse(c,0,0,3,9);ink(c,'#514735',2);break;
     case 'tree': drawTree(c, r, s, season, time); break;
     case 'rock': drawRock(c, r, s, season.rock); break;
     case 'gold': drawRock(c, r, s, GOLD, true); break;
+    case 'chest':
+      c.fillStyle = '#a46a32'; c.strokeStyle = OUTLINE; c.lineWidth = 5; c.beginPath(); c.roundRect(-r,-r*.7,r*2,r*1.4,8); c.fill(); c.stroke(); c.fillStyle = '#e8bf39'; c.fillRect(-r,-8,r*2,12); c.fillRect(-7,-r*.7,14,r*1.4); break;
     case 'big-gold': drawBigGold(c, r, s, time); break;
     case 'bush': drawBush(c, r, s, season); break;
     case 'cactus': drawCactus(c, r, s); break;
@@ -265,6 +269,9 @@ export function drawTool(c, itemId, scale = 1) {
   c.save(); c.scale(scale, scale);
   const shaft = (len, w = 7, from = 0) => { c.beginPath(); c.moveTo(from, 0); c.lineTo(len, 0); stroke2(c, w, HANDLE); };
   switch (item.shape) {
+    case 'net': c.beginPath(); c.moveTo(-12,0);c.lineTo(34,0);stroke2(c,4,'#a97a49');ellipse(c,38,0,16,22);ink(c,'rgba(218,224,201,.35)',3);break;
+    case 'saddle': c.beginPath();c.roundRect(0,-18,30,36,8);ink(c,'#91603d',4);c.beginPath();c.moveTo(5,0);c.lineTo(25,0);stroke2(c,4,'#d4b27a');break;
+
     case 'axe':
       shaft(54);
       c.beginPath(); c.moveTo(34, -4); c.quadraticCurveTo(42, -32, 62, -26); c.quadraticCurveTo(56, -8, 54, 0); c.lineTo(40, 2); c.closePath(); ink(c, head, 4);
@@ -431,6 +438,10 @@ export function drawPlayer(c, p, time, opts = {}) {
   ellipse(c, 0, 9, R * .95, R * .75); c.fillStyle = SHADOW; c.fill();
   c.rotate(p.angle);
 
+  if (p.wings && p.wings !== 'none') {
+    const color = { 'baby-wings':'#d7c8ab', 'dragon-wings':'#6d9e5a', 'dark-wings':'#4a3a61', 'demon-wings':'#b55042', 'round-wings':'#b6974f', 'angel-wings':'#e4dfce' }[p.wings] || '#c4b49c';
+    for (const side of [-1,1]) { c.beginPath(); c.moveTo(-R*.3,side*R*.4); c.quadraticCurveTo(-R*.9,side*R*2.2,-R*1.7,side*R*1.2); c.lineTo(-R*1.1,side*R*.65); c.lineTo(-R*1.4,side*R*.3); c.closePath(); ink(c,color,4); }
+  }
   // ears sit behind the head
   for (const side of [-1, 1]) {
     circle(c, -R * .42, side * R * .64, R * .3); ink(c, fur, 4, line);
@@ -466,7 +477,7 @@ export function drawPlayer(c, p, time, opts = {}) {
   const pull = ranged && k < 1 ? Math.sin(k * Math.PI) * 10 : 0;
   // bare fist: a straight punch
   const punch = shape === 'fist' && k < 1 ? Math.sin(k * Math.PI) * R * .7 : 0;
-  circle(c, R * .7 - pull + punch, R * .72 - punch * .6, handR); ink(c, fur, 4, line);
+  circle(c, R * .7 - pull + (p.punchHand ? 0 : punch), R * .72 - (p.punchHand ? 0 : punch * .6), handR); ink(c, fur, 4, line);
   c.restore();
   // left hand (holds food when eating)
   c.save();
@@ -475,7 +486,7 @@ export function drawPlayer(c, p, time, opts = {}) {
     c.save(); c.translate(R * .55 - bite * 18, -R * .9 + bite * 22); drawTool(c, p.held, .95); c.restore();
   }
   const lift = k < 1 && !ranged && shape !== 'fist' ? Math.sin(k * Math.PI) * 6 : 0;
-  circle(c, R * .7, -R * .72 + lift, handR); ink(c, fur, 4, line);
+  circle(c, R * .7 + (p.punchHand ? punch : 0), -R * .72 + lift + (p.punchHand ? punch * .6 : 0), handR); ink(c, fur, 4, line);
   c.restore();
 
   if (p.hat && p.hat !== 'none') drawHat(c, p.hat, R, time);
@@ -521,7 +532,9 @@ export function drawHat(c, hat, R, time = 0) {
       c.beginPath(); c.roundRect(R * .3, -R * .5, R * .16, R, 3); c.fillStyle = '#4a5157'; c.fill();
       c.beginPath(); c.moveTo(-R * .9, 0); c.lineTo(-R * .1, 0); stroke2(c, 6, '#e2405a');
       break;
-    default: break;
+    default:
+      if (hat !== 'none') { ellipse(c,-R*.2,0,R*.75,R*.8); ink(c,hat.startsWith('season-') ? BIOME_BY_ID[hat.slice(7)]?.ground || '#69834d' : '#9e8256',4); circle(c,0,0,R*.2); ink(c,'#dac68c',3); }
+      break;
   }
 }
 
@@ -959,6 +972,10 @@ export function drawProjectile(c, j, time) {
 }
 
 export function drawHazard(c, h, time) {
+  if (['poison','roots','whirlpool'].includes(h.kind)) {
+    c.save(); circle(c,h.x,h.y,h.r); c.fillStyle = time < h.at ? 'rgba(160,70,180,.15)' : h.kind === 'roots' ? 'rgba(68,108,42,.6)' : h.kind === 'whirlpool' ? 'rgba(44,100,158,.65)' : 'rgba(118,44,140,.55)'; c.fill(); c.strokeStyle = '#b083ba'; c.lineWidth = 4; c.stroke(); c.restore(); return;
+  }
+
   const left = h.at - time;
   c.save(); c.translate(h.x, h.y);
   // warning ring that fills as the meteor nears
@@ -984,16 +1001,8 @@ export function drawHazard(c, h, time) {
  */
 export function drawGround(c, cam, viewW, viewH, time, only = null) {
   const L = cam.x - viewW / 2, T = cam.y - viewH / 2;
-  if (only) { c.fillStyle = only.ground; c.fillRect(L - 2, T - 2, viewW + 4, viewH + 4); }
-  else {
-    // outside the map takes the colour of the nearest square, then gets darkened below
-    BIOME_GRID.forEach((row, j) => row.forEach((id, i) => {
-      const x0 = i === 0 ? L - 2 : i * BIOME_CELL, x1 = i === 2 ? L + viewW + 2 : (i + 1) * BIOME_CELL;
-      const y0 = j === 0 ? T - 2 : j * BIOME_CELL, y1 = j === 2 ? T + viewH + 2 : (j + 1) * BIOME_CELL;
-      const ax = Math.max(x0, L - 2), bx = Math.min(x1, L + viewW + 2), ay = Math.max(y0, T - 2), by = Math.min(y1, T + viewH + 2);
-      if (bx > ax && by > ay) { c.fillStyle = BIOME_BY_ID[id].ground; c.fillRect(ax, ay, bx - ax, by - ay); }
-    }));
-  }
+  const season = only || biomeAt(cam.x, cam.y, time);
+  c.fillStyle = season.ground; c.fillRect(L-2, T-2, viewW+4, viewH+4);
   const cell = 400;
   const x0 = Math.floor(L / cell) * cell, y0 = Math.floor(T / cell) * cell;
   for (let x = x0; x < L + viewW + cell; x += cell) {
@@ -1002,9 +1011,9 @@ export function drawGround(c, cam, viewW, viewH, time, only = null) {
       for (let i = 0; i < 5; i++) {
         const px = x + hash(s + i) * cell, py = y + hash(s + i * 7 + 1) * cell;
         const kind = hash(s + i * 3 + 2);
-        const season = only || biomeAt(px, py), decor = season.decor;
+        const season = only || biomeAt(px, py, time), decor = season.decor;
         // keep each splash of decor on its own side of a biome edge
-        const edge = only ? 999 : Math.min(...[px, py].map(v => Math.abs(v - Math.round(v / BIOME_CELL) * BIOME_CELL)));
+        const edge = 999;
         if (edge < 60) continue;
         if (season.tuft === 'wave' && kind < .5) {
           c.strokeStyle = decor; c.lineWidth = 6; c.lineCap = 'round';

@@ -1,21 +1,21 @@
 import assert from 'node:assert/strict';
-import { ITEMS, ITEM_BY_ID, STARTING_ITEMS, BIOMES, BIOME_GRID, BIOME_CELL, WORLD, CENTER, biomeAt, biomeCells, ageChoices, xpForAge, LAST_CHOICE_AGE, PETS, BOSSES } from '../data.js';
+import { ITEMS, ITEM_BY_ID, STARTING_ITEMS, BIOMES, BIOME_GRID, BIOME_CELL, WORLD, CENTER, biomeAt, biomeCells, biomeState, ageChoices, xpForAge, LAST_CHOICE_AGE, PETS, BOSSES } from '../data.js';
 
-assert.deepEqual(STARTING_ITEMS, ['hand', 'apple', 'wood-wall', 'wood-door', 'wood-spike', 'wood-windmill']);
-assert.equal(ageChoices(1, STARTING_ITEMS).length, 5);
+assert.deepEqual(STARTING_ITEMS, ['hand', 'apple', 'wood-wall', 'wood-spike', 'wood-windmill', 'wood-door']);
+assert.equal(ageChoices(1, STARTING_ITEMS).length, 6);
 for (const id of ageChoices(1, STARTING_ITEMS)) assert.equal(ITEM_BY_ID.get(id).slot, 'primary');
 for (const item of ITEMS.filter(item => item.slot === 'primary' || item.slot === 'secondary')) {
   assert.ok(!item.cost, `${item.name} is an age unlock, not a recipe`);
 }
 assert.ok(ITEM_BY_ID.get('wood-wall').cost.wood > 0);
-assert.equal(xpForAge(0), 20);
-assert.equal(xpForAge(9), 204);
+assert.equal(xpForAge(0), 40);
+assert.equal(xpForAge(9), 400);
 
-// biomes are fixed squares of the map: forest in the middle, every biome somewhere on the 3x3 grid
+// The entire map has one biome; the season clock changes it.
 assert.equal(BIOME_CELL * 3, WORLD.w);
 assert.equal(biomeAt(CENTER.x, CENTER.y).id, 'forest');
-assert.equal(biomeAt(-50, -50).id, BIOME_GRID[0][0]);
-assert.equal(biomeAt(WORLD.w + 50, WORLD.h + 50).id, BIOME_GRID[2][2]);
+assert.equal(biomeAt(-50, -50, 900).id, 'winter');
+assert.equal(biomeAt(WORLD.w + 50, WORLD.h + 50, 1380).id, 'darkness');
 for (const biome of BIOMES) {
   assert.ok(biomeCells(biome.id).length >= 1, `${biome.name} needs a square on the map`);
   assert.ok(Math.abs(biome.mix.reduce((n, [, share]) => n + share, 0) - 1) < 1e-9, `${biome.name} resource shares add up to 1`);

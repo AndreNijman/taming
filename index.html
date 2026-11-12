@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20261029-3">
+  <link rel="stylesheet" href="style.css?v=20261112-1">
   <!-- one version bump busts every module while keeping each a singleton -->
   <script type="importmap">
-    { "imports": { "./data.js": "./data.js?v=20261029-3", "./sim.js": "./sim.js?v=20261029-3", "./render.js": "./render.js?v=20261029-3", "./netping.js": "./netping.js?v=20261029-3", "./netprobe.js": "./netprobe.js?v=20261029-3", "./netdev.js": "./netdev.js?v=20261029-3", "./predict.js": "./predict.js?v=20261029-3" } }
+    { "imports": { "./data.js": "./data.js?v=20261112-1", "./sim.js": "./sim.js?v=20261112-1", "./render.js": "./render.js?v=20261112-1", "./netping.js": "./netping.js?v=20261112-1", "./netprobe.js": "./netprobe.js?v=20261112-1", "./netdev.js": "./netdev.js?v=20261112-1", "./predict.js": "./predict.js?v=20261112-1" } }
   </script>
 </head>
 <body>
@@ -48,7 +48,7 @@
           <p><kbd>F</kbd><span>Pet skills</span></p><p><kbd>Right click</kbd><span>Send pets to a spot</span></p>
           <p><kbd>X</kbd><span>Pets: defend / attack</span></p><p><kbd>E</kbd><span>Auto attack</span></p>
           <p><kbd>L</kbd><span>Lock aim</span></p><p><kbd>M</kbd><span>Map</span></p>
-          <p><kbd>C</kbd><span>Hat shop</span></p><p><kbd>Enter</kbd><span>Chat</span></p>
+          <p><kbd>C</kbd><span>Hats & wings</span></p><p><kbd>Enter</kbd><span>Chat</span></p>
         </div>
         <p class="copy">Each age lets you pick one upgrade. You start with 100 health and no natural regeneration, so carry food. If you fall you lose your age and items, the killer takes a sixth of your gold, but your pets and buildings stay.</p>
         <button id="close-how" class="primary">Got it</button>
@@ -115,7 +115,7 @@
       </div>
       <div class="hud-tr">
         <div class="hud-buttons">
-          <button id="shop-button" class="hud-icon" aria-label="Hat shop (C)" title="Hat shop (C)"><svg viewBox="0 0 24 24"><path d="M4 16h16l-2 4H6zM7 15c0-5 2-9 5-9s5 4 5 9z"/></svg></button>
+          <button id="shop-button" class="hud-icon" aria-label="Hats & wings (C)" title="Hats & wings (C)"><svg viewBox="0 0 24 24"><path d="M4 16h16l-2 4H6zM7 15c0-5 2-9 5-9s5 4 5 9z"/></svg></button>
           <button id="map-button" class="hud-icon" aria-label="Map (M)" title="Map (M)"><svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/></svg></button>
           <button id="menu-button" class="hud-icon" aria-label="Menu (Esc)" title="Menu (Esc)"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
         </div>
@@ -147,12 +147,14 @@
       <canvas id="map-canvas" width="560" height="560"></canvas>
     </section>
     <section id="field-shop" class="dialog card shop-dialog hidden" role="dialog" aria-modal="true">
-      <div class="dialog-head"><h2>Hat shop</h2><button id="close-shop" class="icon-button" aria-label="Close shop">×</button></div>
+      <div class="dialog-head"><h2>Hats & wings</h2><button id="close-shop" class="icon-button" aria-label="Close shop">×</button></div>
       <p class="muted">Hats cost gold and last until you leave this world.</p>
       <div id="shop-items" class="shop-items"></div>
     </section>
-    <section id="pause" class="dialog card pause hidden" role="dialog" aria-modal="true">
-      <h2>Paused</h2>
+    <section id="pause" class="dialog card pause hidden" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+      <h2 id="pause-title">Paused</h2>
+      <button id="keybind-settings" class="secondary" aria-controls="keybind-section" aria-expanded="false">Keybind settings</button>
+      <div id="keybind-section" class="hidden"><p>Select a control, then press its new key. Escape cancels.</p><div id="keybinds"></div><button id="reset-keybinds" class="secondary">Reset keybinds</button></div>
       <button id="resume" class="primary">Resume</button><button id="quit" class="secondary">Leave game</button>
     </section>
     <section id="death" class="dialog card death hidden" role="dialog" aria-modal="true">
@@ -161,6 +163,6 @@
     </section>
     <div id="toast" role="status" aria-live="polite"></div>
   </main>
-  <script type="module" src="game.js?v=20261029-3"></script>
+  <script type="module" src="game.js?v=20261112-1"></script>
 </body>
 </html>

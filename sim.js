@@ -2,8 +2,8 @@
 // multiplayer Durable Object. Pure data in, pure data out: no DOM, no sockets.
 import {
   WORLD, CENTER, BIOMES, BIOME_GRID, BIOME_CELL, biomeAt, biomeCells, RESOURCE_TYPES, NODES_PER_CELL, ITEM_BY_ID, STARTING_ITEMS, START_RESOURCES, TAME_FOOD,
-  SLOT_ORDER, BUILD_LIMIT, PETS, PET_BY_ID, PET_XP, MAX_PETS, BOSSES, BOSS_BY_ID, HAT_BY_ID, SKILLS,
-  xpForAge, MAX_AGE, LAST_CHOICE_AGE, ageChoices, typeMultiplier,
+  SLOT_ORDER, BUILD_LIMIT, PETS, PET_BY_ID, PET_XP, MAX_PETS, BOSSES, BOSS_BY_ID, HAT_BY_ID, ACCESSORY_BY_ID, SKILLS,
+  xpForAge, totalXp, biomeState, MAX_AGE, LAST_CHOICE_AGE, ageChoices, typeMultiplier,
 } from './data.js';
 
 export const PLAYER_R = 35;
@@ -11,7 +11,7 @@ export const BASE_SPEED = 340;
 export const TICK = 1 / 20;
 const TAU = Math.PI * 2;
 const SPAWN_SHIELD = 5;
-export const VIEW = { w: 1400, h: 900 }; // half extents of what a client can see
+export const VIEW = { w: 3200, h: 2000 }; // half extents of what a client can see
 
 export const BOT_NAMES = ['Fern', 'Kestrel', 'Mochi', 'Bramble', 'Juniper', 'Pip', 'Rowan', 'Clover', 'Wren', 'Taro', 'Mallow', 'Ash', 'Basil', 'Nori'];
 
@@ -33,9 +33,9 @@ const kindOf = s => item(s.item)?.kind;
 // ---------------- resources (deterministic per world seed) ----------------
 
 // The resource layout depends only on the world seed, so clients rebuild it
-// locally and the server never streams it. Each biome square gets its own
-// mix; rocks often come as a big and a small one side by side.
-export function generateResources(seed) {
+// locally; snapshots carry durability changes and dynamic chests. Each season
+// uses its own mix; rocks often come as a big and a small one side by side.
+export function generateResources(seed, biomeId = 'forest') {
   const random = rng((seed ^ 0x9E3779B1) | 0);
   const list = [{ id: 'gold-heart', type: 'big-gold', x: CENTER.x, y: CENTER.y, r: 110, biome: 'forest' }];
   const cell = 300, grid = new Map();
@@ -49,7 +49,8 @@ export function generateResources(seed) {
     return true;
   };
   const pick = mix => { let roll = random(); for (const [t, share] of mix) { if (roll < share) return t; roll -= share; } return mix[0][0]; };
-  BIOME_GRID.forEach((row, j) => row.forEach((id, i) => {
+  BIOME_GRID.forEach((row, j) => row.forEach((_, i) => {
+    const id = biomeId;
     const biome = BIOMES.find(b => b.id === id), x0 = i * BIOME_CELL, y0 = j * BIOME_CELL;
     let placed = 0;
     for (let attempt = 0; attempt < 4000 && placed < NODES_PER_CELL; attempt++) {
@@ -65,10 +66,14 @@ export function generateResources(seed) {
       if (type === 'rock' && random() < .45) {
         const a = random() * Math.PI * 2, r2 = Math.round(r * (.55 + random() * .15)), d = r + r2 + 8;
         const x2 = Math.round(x + Math.cos(a) * d), y2 = Math.round(y + Math.sin(a) * d);
-        if (fits(x2, y2, r2, 0) && biomeAt(x2, y2).id === id) { const m = { id: `r${list.length}`, type, x: x2, y: y2, r: r2, biome: id }; list.push(m); add(m); }
+        if (fits(x2, y2, r2, 0)) { const m = { id: `r${list.length}`, type, x: x2, y: y2, r: r2, biome: id }; list.push(m); add(m); }
       }
     }
   }));
+  for (let i=0;i<32;i++) {
+    const n={id:`insect${i}`,type:'insect',x:Math.round(160+random()*(WORLD.w-320)),y:Math.round(160+random()*(WORLD.h-320)),r:12,biome:biomeId};list.push(n);add(n);
+  }
+  for (const n of list) { n.hp = RESOURCE_TYPES[n.type].hp; n.respawnAt = 0; }
   return { list, grid, cell };
 }
 
@@ -84,14 +89,15 @@ export function createWorld(seed = Date.now(), opts = {}) {
     players: {}, animals: [], structures: [], projectiles: [], resources: [], hazards: [],
     events: [], nextId: 1, random: rng(seed | 0), meteorAt: 0, bossAt: {},
   };
-  const res = generateResources(world.seed);
+  world.biome = biomeState(world.time).biome.id;
+  const res = generateResources(world.seed, world.biome);
   world.resources = res.list;
   Object.defineProperty(world, 'grid', { value: res, enumerable: false, configurable: true });
-  for (const def of PETS) {
+  for (const def of PETS.filter(d => d.biome === world.biome)) {
     const n = POPULATION[def.rarity];
-    for (let i = 0; i < n; i++) spawnAnimal(world, def, i % 3 === 2 ? 1 : 0);
+    for (let i = 0; i < n; i++) spawnAnimal(world, def, i % 6 === 5 ? 2 : i % 3 === 2 ? 1 : 0);
   }
-  for (const b of BIOMES) spawnBoss(world, BOSS_BY_ID.get(b.boss));
+  spawnBoss(world, BOSS_BY_ID.get(biomeState(world.time).biome.boss));
   return world;
 }
 
@@ -145,7 +151,7 @@ function spawnBoss(world, def) {
 
 export function addPlayer(world, { id, name, bot = false, skin = 0 }) {
   const p = {
-    id, name: String(name || 'Tamer').slice(0, 16), bot, skin, hat: 'none', hats: ['none'],
+    id, name: String(name || 'Tamer').slice(0, 16), bot, skin, hat: 'none', hats: ['none'], wings: 'none', accessories: ['none'], upgrades: {},
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, r: PLAYER_R, hp: 100, maxHp: 100, dead: false, deadAt: 0,
     age: 0, xp: 0, kills: 0, tames: 0, res: { ...START_RESOURCES }, items: [...STARTING_ITEMS], sel: 0, held: STARTING_ITEMS[0],
     cd: 0, actionAt: -9, hitAt: -9, lastHurtAt: -99, pets: [], choices: [], trappedUntil: 0, slowUntil: 0,
@@ -158,17 +164,36 @@ export function addPlayer(world, { id, name, bot = false, skin = 0 }) {
 }
 
 function spawnPlayer(world, p) {
-  const spot = freeSpot(world, 60, 900, 'forest');
+  const spot = freeSpot(world, 60, 900);
+  const retainedXp = p.dead ? Math.floor(totalXp(p.age, p.xp) * .4) : 0;
+  const retainedItems = p.dead ? [...p.items] : null;
+  const upgrades = p.upgrades || {}; p.upgrades = {};
   Object.assign(p, {
     x: spot.x, y: spot.y, vx: 0, vy: 0, dead: false, hp: 100, maxHp: 100, age: 0, xp: 0, kills: 0, tames: 0,
     res: { ...START_RESOURCES }, items: [...STARTING_ITEMS], sel: 0, held: STARTING_ITEMS[0], choices: [], cd: 0,
-    trappedUntil: 0, slowUntil: 0, poison: 0, burn: 0, hot: 0, armorUntil: 0, hasteUntil: 0,
+    trappedUntil: 0, slowUntil: 0, poison: 0, burn: 0, hot: 0, armorUntil: 0, hasteUntil: 0, mounted: null, blindUntil: 0, boostUntil: 0, buildBlockedUntil: 0,
     shieldUntil: world.time + SPAWN_SHIELD, lastHitBy: null,
   });
+  if (retainedXp) {
+    gainXp(world, p, retainedXp);
+    // Replay only choices available by the retained age. Higher upgrades must be earned again.
+    for (let age = 1; age <= p.age; age++) {
+      const offer = ageChoices(age, p.items);
+      const old = retainedItems.map(item).find(it => offer.includes(it.id));
+      const preferred = offer.includes(upgrades[age]) ? upgrades[age] : old?.id || offer.find(id => retainedItems.some(prev => {
+        const want = item(prev), candidate = item(id);
+        return want.slot === candidate.slot && (!candidate.family || candidate.family === want.family) && (!candidate.shape || candidate.shape === want.shape);
+      }));
+      if (preferred) { p.upgrades[age] = preferred; const ix = p.choices.indexOf(age); if (ix >= 0) p.choices.splice(ix, 1); const slot = item(preferred).slot; const at = p.items.findIndex(id => item(id).slot === slot); if (at >= 0) p.items[at] = preferred; else p.items.push(preferred); }
+    }
+    p.items.sort((a,b) => SLOT_ORDER.indexOf(item(a).slot) - SLOT_ORDER.indexOf(item(b).slot));
+    p.held = p.items[0];
+  }
+  p.attackHeld = false; p.pendingUse = null;
   // pets come back with their tamer
   for (const id of p.pets) {
     const a = world.animals.find(x => x.id === id);
-    if (a) { a.x = p.x - 60; a.y = p.y + 40; a.hp = a.maxHp; a.target = null; a.dead = false; }
+    if (a) { a.x = p.x - 60; a.y = p.y + 40; a.hp = a.maxHp; a.target = null; a.lockedTarget = null; a.post = null; a.mode = 'defend'; a.dead = false; }
   }
   p.pets = p.pets.filter(id => world.animals.some(a => a.id === id));
 }
@@ -197,7 +222,7 @@ export function setInput(world, id, input) {
 
 export function command(world, id, cmd) {
   const p = world.players[id];
-  if (!p || !cmd) return;
+  if (!p || !cmd || p.dead && cmd.t !== 'respawn') return;
   switch (cmd.t) {
     case 'choose': choose(world, p, String(cmd.id || '')); break;
     case 'tame': tryTame(world, p); break;
@@ -206,9 +231,10 @@ export function command(world, id, cmd) {
     case 'skill': petSkills(world, p, Number.isInteger(cmd.slot) ? cmd.slot : -1); break;
     case 'pets': petCommand(world, p, cmd); break;
     case 'hat': buyHat(world, p, String(cmd.id || '')); break;
+    case 'accessory': { const a=ACCESSORY_BY_ID.get(cmd.id); if (!a) break; if (!p.accessories.includes(a.id)) { if(p.res.gold<a.cost) break; p.res.gold-=a.cost;p.accessories.push(a.id); } p.wings=a.id; break; }
     case 'release': {
       const a = world.animals.find(x => x.id === cmd.id && x.owner === p.id);
-      if (a) { p.pets = p.pets.filter(x => x !== a.id); a.owner = null; a.state = 'wander'; a.home = { x: a.x, y: a.y }; }
+      if (a) { p.pets = p.pets.filter(x => x !== a.id); if(p.mounted===a.id)p.mounted=null; a.owner = null; a.target = null; a.lockedTarget = null; a.post = null; a.mode = 'defend'; a.sleep = false; a.bonus = 0; a.state = 'wander'; a.home = { x: a.x, y: a.y }; }
       break;
     }
   }
@@ -220,10 +246,15 @@ function choose(world, p, itemId) {
   if (!p.choices.length) return;
   const offer = currentOffer(p);
   if (!offer.includes(itemId)) return;
+  p.upgrades ||= {}; p.upgrades[p.choices[0]] = itemId;
+  const selectedSlot = item(p.items[p.sel])?.slot;
   const it = item(itemId);
   const at = p.items.findIndex(id => item(id)?.slot === it.slot);
   if (at >= 0) p.items[at] = itemId; else p.items.push(itemId);
   p.items.sort((a, b) => SLOT_ORDER.indexOf(item(a).slot) - SLOT_ORDER.indexOf(item(b).slot));
+  p.sel = Math.max(0, p.items.findIndex(id => item(id)?.slot === selectedSlot));
+  p.input.sel = p.sel;
+  p.held = p.items[p.sel];
   p.choices.shift();
   while (p.choices.length && !currentOffer(p).length) p.choices.shift();
 }
@@ -273,7 +304,7 @@ export function tameTarget(world, p) {
 }
 export function tameChance(p, a) {
   const def = PET_BY_ID.get(a.species);
-  return Math.min(95, (def.tame + (a.bonus || 0)) * (hat(p).tame || 1));
+  return Math.max(0, Math.min(95, (def.tame + (a.bonus || 0)) * (hat(p).tame || 1)));
 }
 function tryTame(world, p) {
   if (p.dead) return;
@@ -292,8 +323,8 @@ function tryTame(world, p) {
     gainXp(world, p, 50);
     emit(world, { k: 'tame', by: p.id, name: p.name, id: a.id, species: a.species, x: a.x, y: a.y, chance: Math.round(chance) });
   } else {
-    // a miss leaves it asleep, a little easier next time, and dozing a little longer
-    a.bonus = (a.bonus || 0) + 2; a.wakeAt = Math.max(a.wakeAt, world.time + 8);
+    a.sleep = false; a.bonus = 0; a.angry = true; a.state = 'chase'; a.target = p.id;
+    a.sleepAt = world.time + 40; a.contactSince = null;
     emit(world, { k: 'tamefail', by: p.id, x: a.x, y: a.y, chance: Math.round(chance), species: a.species });
   }
 }
@@ -319,6 +350,7 @@ export const levelBoost = level => 1 + .03 * ((level || 1) - 1);
 
 function petXp(world, a, amt) {
   if (!a?.owner || amt <= 0) return;
+  const owner = world.players[a.owner]; amt *= owner ? hat(owner).petXp || 1 : 1;
   a.total = (a.total || 0) + amt;
   const level = petLevel(a.total), def = PET_BY_ID.get(a.species);
   if (level !== (a.level || 1)) {
@@ -341,6 +373,82 @@ function sharePetXp(world, owner, pot, x, y) {
   emit(world, { k: 'petxp', owner, ids: pets.map(a => a.id), amt });
 }
 
+// A season changes the entire map. Visible wildlife stays until it leaves all players' views.
+function visibleToPlayer(world, a) {
+  return Object.values(world.players).some(p => !p.dead && !p.bot && Math.abs(p.x-a.x) < VIEW.w+a.r+250 && Math.abs(p.y-a.y) < VIEW.h+a.r+250);
+}
+function updateBiome(world) {
+  const current = biomeState(world.time).biome;
+  if (world.biome === current.id) return;
+  world.biome = current.id;
+  const res = generateResources(world.seed, current.id);
+  world.resources = res.list;
+  Object.defineProperty(world, 'grid', { value: res, enumerable: false, configurable: true });
+  world.animals = world.animals.filter(a => a.owner || !a.dead && visibleToPlayer(world, a));
+  for (const def of PETS.filter(d => d.biome === current.id)) {
+    const have = world.animals.filter(a => !a.owner && !a.dead && a.species === def.id).length;
+    for (let i = have; i < POPULATION[def.rarity]; i++) spawnAnimal(world, def, i % 6 === 5 ? 2 : i % 3 === 2 ? 1 : 0);
+  }
+  if (!world.animals.some(a => a.boss === current.boss && !a.dead)) spawnBoss(world, BOSS_BY_ID.get(current.boss));
+  for (const e of [...Object.values(world.players), ...world.animals]) if (!e.dead) collide(world, e, true);
+  emit(world, { k: 'season', biome: current.id });
+}
+function roam(world, a, center, radius) {
+  if (!a.wanderGoal || world.time >= a.wanderAt || dist(a.wanderGoal, center) > radius*1.5) {
+    a.wanderAt = world.time + 2 + world.random()*3;
+    const angle = world.random()*TAU, d = radius*(.3 + world.random()*.7);
+    a.wanderGoal = { x: clamp(center.x + Math.cos(angle)*d, a.r, WORLD.w-a.r), y: clamp(center.y + Math.sin(angle)*d, a.r, WORLD.h-a.r) };
+  }
+  return dist(a, a.wanderGoal) > 15 ? a.wanderGoal : null;
+}
+function biteReady(world, a, target) {
+  if (dist(a, target) >= a.r + target.r + 16) { a.contactSince = null; a.contactTarget = null; return false; }
+  if (a.contactTarget !== target.id || a.contactSince == null) { a.contactTarget = target.id; a.contactSince = world.time; }
+  return world.time - a.contactSince >= .35 && world.time >= a.cd;
+}
+
+// Bounded A* around inflated obstacles; cached routes are shared by bot and animal steering.
+export function navigationGoal(world, e, goal) {
+  if (!goal) return null;
+  if (e.navPoint && world.time < e.navAt && dist(e.navPoint,e)>20 && dist(e.navTarget,goal)<80) return e.navPoint;
+  const remember = point => { e.navPoint = point; e.navTarget = {x:goal.x,y:goal.y}; e.navAt = world.time + .25; return point; };
+  const clear = (a,b) => {
+    const d = dist(a,b), n = Math.ceil(d/35);
+    for (let i=1; i<=n; i++) if (solidAt(world,a.x+(b.x-a.x)*i/n,a.y+(b.y-a.y)*i/n,e.r+3)) return false;
+    return true;
+  };
+  let destination = goal;
+  if (solidAt(world,goal.x,goal.y,e.r+3)) {
+    const angle = Math.atan2(e.y-goal.y,e.x-goal.x), r = (goal.r || 45) + e.r + 12;
+    for (let i=0; i<16; i++) { const a=angle + (i%2 ? 1 : -1)*Math.ceil(i/2)*Math.PI/8; const q={x:goal.x+Math.cos(a)*r,y:goal.y+Math.sin(a)*r}; if (!solidAt(world,q.x,q.y,e.r+3)) { destination=q; break; } }
+  }
+  if (clear(e,destination)) { e.route=null; return remember(destination); }
+  if (e.route && world.time < e.routeAt && dist(e.routeEnd,destination)<100) {
+    while (e.route.length && dist(e,e.route[0])<40) e.route.shift();
+    if (e.route.length && clear(e,e.route[0])) return remember(e.route[0]);
+  }
+  const cell=80, sx=Math.round(e.x/cell), sy=Math.round(e.y/cell), gx=Math.round(destination.x/cell), gy=Math.round(destination.y/cell);
+  const key=(x,y)=>`${x},${y}`, heuristic=(x,y)=>Math.hypot(x-gx,y-gy);
+  const first={x:sx,y:sy,g:0,f:heuristic(sx,sy),parent:null}, open=[first], seen=new Map([[key(sx,sy),first]]), closed=new Set(), occupancy=new Map();
+  let best=first, found=null;
+  const walkable=(x,y)=>{ const k=key(x,y); if (!occupancy.has(k)) occupancy.set(k,x*cell>e.r && y*cell>e.r && x*cell<WORLD.w-e.r && y*cell<WORLD.h-e.r && !solidAt(world,x*cell,y*cell,e.r+8)); return occupancy.get(k); };
+  for (let iter=0;open.length && iter<1600;iter++) {
+    let at=0; for (let i=1;i<open.length;i++) if(open[i].f<open[at].f) at=i;
+    const n=open.splice(at,1)[0], k=key(n.x,n.y); if(closed.has(k)) continue; closed.add(k);
+    if(heuristic(n.x,n.y)<heuristic(best.x,best.y)) best=n;
+    if(Math.hypot(n.x*cell-destination.x,n.y*cell-destination.y)<100) { found=n; break; }
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+      const x=n.x+dx,y=n.y+dy,k2=key(x,y); if(closed.has(k2) || Math.abs(x-sx)>22 || Math.abs(y-sy)>22 || !walkable(x,y) || dx&&dy&&(!walkable(n.x+dx,n.y)||!walkable(n.x,n.y+dy))) continue;
+      const g=n.g+Math.hypot(dx,dy); if(seen.has(k2)&&seen.get(k2).g<=g) continue;
+      const q={x,y,g,f:g+heuristic(x,y),parent:n}; seen.set(k2,q);open.push(q);
+    }
+  }
+  const path=[]; for(let n=found||best;n&&n.parent;n=n.parent) path.unshift({x:n.x*cell,y:n.y*cell});
+  while(path.length>1 && clear(e,path[1])) path.shift();
+  e.route=path;e.routeAt=world.time+1.2;e.routeEnd={x:destination.x,y:destination.y};
+  return remember(path[0] || destination);
+}
+
 // ---------------- collision ----------------
 
 export function nearbyResources(world, x, y, range) {
@@ -350,7 +458,7 @@ export function nearbyResources(world, x, y, range) {
   const r0 = Math.floor((y - range) / cell), r1 = Math.floor((y + range) / cell);
   for (let i = c0; i <= c1; i++) for (let j = r0; j <= r1; j++) {
     const list = grid.get(`${i},${j}`);
-    if (list) for (const n of list) out.push(n);
+    if (list) for (const n of list) if (!n.respawnAt) out.push(n);
   }
   return out;
 }
@@ -362,7 +470,7 @@ function blocks(s, e) {
   return true;
 }
 function solidAt(world, x, y, r) {
-  for (const n of nearbyResources(world, x, y, r + 140)) if ((n.x - x) ** 2 + (n.y - y) ** 2 < (n.r + r) ** 2) return true;
+  for (const n of nearbyResources(world, x, y, r + 140)) if (RESOURCE_TYPES[n.type].solid !== false && (n.x - x) ** 2 + (n.y - y) ** 2 < (n.r + r) ** 2) return true;
   for (const s of world.structures) if (SOLID.has(kindOf(s)) && (s.x - x) ** 2 + (s.y - y) ** 2 < (s.r + r) ** 2) return true;
   return false;
 }
@@ -370,6 +478,7 @@ function solidAt(world, x, y, r) {
 // `harmless` is for client prediction, which moves like the server but never deals damage
 function collide(world, e, harmless = false) {
   for (const n of nearbyResources(world, e.x, e.y, e.r + 140)) {
+    if (RESOURCE_TYPES[n.type].solid === false) continue;
     const before = !harmless && n.type === 'cactus' && (e.x - n.x) ** 2 + (e.y - n.y) ** 2 < (n.r + e.r + 4) ** 2;
     pushOut(e, n, n.r);
     if (before && world.tick % 2 === 0 && !e.dead) hurt(world, e, RESOURCE_TYPES.cactus.hurts, null, { kind: 'thorns', kb: 0 });
@@ -410,17 +519,20 @@ function friendly(a, b) { return ownerOf(a) && ownerOf(a) === ownerOf(b); }
 
 // by: the entity (player, animal, or {x,y,id,owner} for buildings/projectiles)
 function hurt(world, t, amt, by, opts = {}) {
-  if (t.dead || t.hp <= 0) return 0;
+  if (t.dead || t.hp <= 0 || world.time < (t.invulnerableUntil || 0)) return 0;
   if (t.shieldUntil && world.time < t.shieldUntil && !t.owner) return 0;
   if (by && friendly(t, by)) return 0;
   let dmg = amt;
+  if(t.mountBuff==='turtle') dmg *= .7;
+  if (opts.element && t.species) { const types = t.boss ? BOSS_BY_ID.get(t.boss).types : PET_BY_ID.get(t.species).types; dmg *= typeMultiplier(opts.element, types); }
   if (t.items) {
     if (t.armorUntil > world.time) dmg *= 1 - t.armor;
     if (hat(t).armor) dmg *= 1 - hat(t).armor;
+    if (hat(t).biome === world.biome && hat(t).biomeArmor) dmg *= 1 - hat(t).biomeArmor;
     const held = item(t.held);
-    if (held?.block && by) {
+    if ((held?.block || held?.skillBlock) && by) {
       const ang = Math.atan2(by.y - t.y, by.x - t.x);
-      if (Math.abs(angleDiff(t.angle, ang)) < 1.1) dmg *= 1 - held.block;
+      if (Math.abs(angleDiff(t.angle, ang)) < 1.1) dmg *= 1 - (opts.skill ? held.skillBlock || held.block : held.block);
     }
   }
   dmg = Math.max(1, Math.round(dmg));
@@ -470,10 +582,10 @@ function killAnimal(world, a, by) {
   const killer = world.players[ownerOf(by)];
   if (a.owner) {
     const owner = world.players[a.owner];
-    if (owner) owner.pets = owner.pets.filter(id => id !== a.id);
+    if (owner) { owner.pets = owner.pets.filter(id => id !== a.id); if(owner.mounted===a.id)owner.mounted=null; }
     emit(world, { k: 'petdied', owner: a.owner, species: a.species, x: a.x, y: a.y });
     world.animals = world.animals.filter(x => x !== a);
-    if (killer) gainXp(world, killer, [50, 100, 400][a.stage]);
+    if (killer) gainXp(world, killer, [50, 100, 400][a.stage] * (hat(killer).killXp || 1));
     return;
   }
   if (a.boss) {
@@ -482,12 +594,17 @@ function killAnimal(world, a, by) {
     for (const [pid, d] of Object.entries(a.dmgBy)) {
       const p = world.players[pid]; if (!p || p.dead) continue;
       const share = d / total;
-      gainGold(p, Math.round(def.gold * share)); gainXp(world, p, Math.round(def.xp * share)); p.res.food += Math.round(300 * share);
+      gainXp(world, p, Math.round(def.xp * share)); p.res.food += Math.round(300 * share);
     }
-    const pool = PETS.filter(p => p.biome === def.biome).sort((x, y) => ['common', 'rare', 'epic', 'legendary'].indexOf(y.rarity) - ['common', 'rare', 'epic', 'legendary'].indexOf(x.rarity));
+    const pool = PETS.filter(p => p.biome === def.biome && p.rarity === 'legendary');
     for (let i = 0; i < 3; i++) {
       const baby = spawnAnimal(world, pool[i % Math.min(2, pool.length)], 0, { x: a.x + Math.cos(i * 2.1) * 140, y: a.y + Math.sin(i * 2.1) * 140 });
       baby.sleep = true; baby.wakeAt = world.time + 60; baby.bonus = 10;
+    }
+    for (let i=0;i<3;i++) {
+      const n = { id: `chest${world.nextId++}`, type: 'chest', x: Math.round(a.x + Math.cos(i*TAU/3)*220), y: Math.round(a.y + Math.sin(i*TAU/3)*220), r: 35, hp: 60, respawnAt: 0, biome: world.biome };
+      world.resources.push(n); const k = `${Math.floor(n.x/world.grid.cell)},${Math.floor(n.y/world.grid.cell)}`;
+      if (!world.grid.grid.has(k)) world.grid.grid.set(k, []); world.grid.grid.get(k).push(n);
     }
     emit(world, { k: 'boss', by: killer?.id, byName: killer?.name, name: def.name, x: a.x, y: a.y });
     world.animals = world.animals.filter(x => x !== a);
@@ -496,7 +613,7 @@ function killAnimal(world, a, by) {
   }
   if (killer) {
     // big wild animals are the early game's paycheque
-    gainXp(world, killer, [50, 100, 400][a.stage]);
+    gainXp(world, killer, [50, 100, 400][a.stage] * (hat(killer).killXp || 1));
     gainGold(killer, [5, 40, 400][a.stage]);
     killer.res.food += [8, 20, 60][a.stage];
   }
@@ -507,7 +624,6 @@ function killAnimal(world, a, by) {
 }
 
 function hitStructure(world, s, dmg, by) {
-  if (s.owner === ownerOf(by)) return;
   s.hp -= dmg; s.hitAt = world.time;
   emit(world, { k: 'dmg', id: s.id, x: s.x, y: s.y - s.r, amt: Math.round(dmg), kind: 'struct' });
   if (s.hp <= 0) destroyStructure(world, s);
@@ -519,9 +635,9 @@ function destroyStructure(world, s) {
 
 function petDamageVs(a, t) {
   const def = PET_BY_ID.get(a.species);
-  const tdef = t.species && !t.boss ? PET_BY_ID.get(t.species) : null;
+  const tdef = t.boss ? BOSS_BY_ID.get(t.boss) : t.species ? PET_BY_ID.get(t.species) : null;
   const m = tdef ? def.types.reduce((acc, ty) => Math.max(acc, typeMultiplier(ty, tdef.types)), 0) : 1;
-  return { mult: m || 1 };
+  return { mult: (m || 1) * (a.mountBuff === 'battle' ? 1.2 : 1) };
 }
 
 // One melee swing: everything inside the arc in front of the player is hit.
@@ -531,18 +647,24 @@ function swing(world, p, it) {
   const inArc = (o, or) => {
     const d = Math.hypot(o.x - p.x, o.y - p.y);
     if (d - or > reach) return false;
+    if (it.spin) return true;
     return Math.abs(angleDiff(p.angle, Math.atan2(o.y - p.y, o.x - p.x))) < arc * .62 + Math.min(.9, or / Math.max(d, 1));
   };
   const bonus = hat(p).gather || {};
   for (const n of nearbyResources(world, fx, fy, reach + 140)) {
-    if (!inArc(n, n.r)) continue;
+    if (!inArc(n, n.r) || RESOURCE_TYPES[n.type].catchOnly) continue;
     const spec = RESOURCE_TYPES[n.type];
-    const amt = Math.max(1, Math.round((it.harvest?.[spec.yields] || 1) * (spec.per || 1) + (bonus[spec.yields] || 0) + (p.hat === 'leaf' && spec.yields === 'wood' ? 1 : 0)));
+    const amt = Math.max(1, Math.round((it.harvest?.[spec.yields] || 1) * (spec.per || 1) + (bonus[spec.yields] || 0) + 0));
     if (spec.yields === 'gold') gainGold(p, amt); else p.res[spec.yields] += amt;
-    gainXp(world, p, amt * 2);
+    gainXp(world, p, amt);
+    if (spec.hp) {
+      n.hp -= it.bdm || it.dmg || 4;
+      if (n.hp <= 0) { n.hp = 0; n.respawnAt = spec.respawn ? world.time + spec.respawn : Infinity; emit(world, { k: 'resourcebreak', id: n.id, x: n.x, y: n.y }); }
+    }
     emit(world, { k: 'gather', id: n.id, by: p.id, res: spec.yields, amt, ang: p.angle, x: n.x, y: n.y });
   }
-  const dmgMul = p.hat === 'horns' ? 1.1 : 1;
+  const accessory = ACCESSORY_BY_ID.get(p.wings);
+  const dmgMul = (p.hat === 'horns' ? 1.1 : 1) * (accessory?.family === it.family ? accessory.damage : 1);
   let hitPlayer = null;
   for (const a of world.animals) {
     if (a.dead || a.owner === p.id || !inArc(a, a.r)) continue;
@@ -559,12 +681,12 @@ function swing(world, p, it) {
     if (!inArc(s, s.r)) continue;
     if (s.owner === p.id) {
       if (it.repair && s.hp < s.maxHp) { const before = s.hp; s.hp = Math.min(s.maxHp, s.hp + it.repair); emit(world, { k: 'heal', id: s.id, x: s.x, y: s.y - s.r, amt: Math.round(s.hp - before) }); }
-      continue;
+      if (it.repair) continue;
     }
-    hitStructure(world, s, it.bdm * dmgMul, p);
+    hitStructure(world, s, (it.bdm || 0) * dmgMul, p);
   }
   // pets pile onto whatever their tamer just hit
-  if (hitPlayer) for (const id of p.pets) { const a = world.animals.find(x => x.id === id); if (a && a.mode !== 'stop') a.target = hitPlayer.id; }
+  if (hitPlayer) for (const id of p.pets) { const a = world.animals.find(x => x.id === id); if (a && a.mode !== 'stop' && !a.lockedTarget) a.target = hitPlayer.id; }
 }
 
 function canAfford(p, cost) { return Object.entries(cost || {}).every(([k, v]) => p.res[k] >= v); }
@@ -573,40 +695,40 @@ function pay(p, cost) { for (const [k, v] of Object.entries(cost || {})) p.res[k
 function shoot(world, p, it) {
   if (!canAfford(p, it.ammo)) { emit(world, { k: 'msg', to: p.id, text: `Needs ${Object.entries(it.ammo).map(([k, v]) => `${v} ${k}`).join(', ')}` }); return false; }
   pay(p, it.ammo);
+  const angle = p.angle + (it.spread ? (world.random()-.5)*it.spread*2 : 0);
   const kind = it.shape === 'appletor' ? 'apple' : it.shape === 'slingshot' ? 'pebble' : 'arrow';
   world.projectiles.push({
     id: `j${world.nextId++}`, x: p.x + Math.cos(p.angle) * (p.r + 20), y: p.y + Math.sin(p.angle) * (p.r + 20),
-    vx: Math.cos(p.angle) * it.projectile, vy: Math.sin(p.angle) * it.projectile, item: it.id, kind,
+    vx: Math.cos(angle) * it.projectile, vy: Math.sin(angle) * it.projectile, item: it.id, kind,
     owner: p.id, until: world.time + it.range / it.projectile, r: kind === 'arrow' ? 8 : 12,
   });
   return true;
 }
 
 function place(world, p, it) {
+  if (SOLID.has(it.kind) && world.time < (p.buildBlockedUntil || 0)) return false;
   if (!canAfford(p, it.cost)) { emit(world, { k: 'msg', to: p.id, text: `Not enough resources for ${it.name}` }); return false; }
   const mine = world.structures.filter(s => s.owner === p.id);
   if (mine.length >= BUILD_LIMIT) { emit(world, { k: 'msg', to: p.id, text: 'Building limit reached' }); return false; }
   const same = mine.filter(s => item(s.item).kind === it.kind);
   if (same.length >= it.limit) { emit(world, { k: 'msg', to: p.id, text: `${it.name}: limit ${it.limit}` }); return false; }
-  const d = p.r + it.r + 4;
+  const d = placementDistance(p, it);
   const x = p.x + Math.cos(p.angle) * d, y = p.y + Math.sin(p.angle) * d;
   if (!placeable(world, x, y, it)) return false;
   pay(p, it.cost);
   const s = { id: `s${world.nextId++}`, item: it.id, x: Math.round(x), y: Math.round(y), r: it.r, rot: it.kind === 'boost' ? p.angle : 0, hp: it.hp, maxHp: it.hp, owner: p.id, cd: 0, aim: p.angle, born: world.time };
   world.structures.push(s);
+  for (const e of [...Object.values(world.players), ...world.animals]) if (!e.dead && blocks(s, e)) { pushOut(e, s, s.r); collide(world, e); }
   emit(world, { k: 'place', by: p.id, x: s.x, y: s.y, item: it.id });
   return true;
 }
+export const placementDistance = (p, it) => p.r + it.r - 6;
 export function placeable(world, x, y, it) {
   if (x < it.r || y < it.r || x > WORLD.w - it.r || y > WORLD.h - it.r) return false;
-  for (const n of nearbyResources(world, x, y, it.r + 140)) if ((n.x - x) ** 2 + (n.y - y) ** 2 < (n.r + it.r - 4) ** 2) return false;
+  for (const n of nearbyResources(world, x, y, it.r + 140)) if (RESOURCE_TYPES[n.type].solid !== false && (n.x - x) ** 2 + (n.y - y) ** 2 < (n.r + it.r - 4) ** 2) return false;
   for (const s of world.structures) {
     const box = (kindOf(s) === 'wall' || kindOf(s) === 'door') && (it.kind === 'wall' || it.kind === 'door');
     if (box ? Math.abs(s.x - x) < s.r + it.r - 2 && Math.abs(s.y - y) < s.r + it.r - 2 : (s.x - x) ** 2 + (s.y - y) ** 2 < (s.r + it.r - 4) ** 2) return false;
-  }
-  if (SOLID.has(it.kind)) {
-    for (const o of Object.values(world.players)) if (!o.dead && (o.x - x) ** 2 + (o.y - y) ** 2 < (o.r + it.r - 6) ** 2) return false;
-    for (const a of world.animals) if (!a.dead && (a.x - x) ** 2 + (a.y - y) ** 2 < (a.r + it.r - 6) ** 2) return false;
   }
   return true;
 }
@@ -615,7 +737,14 @@ export function placeable(world, x, y, it) {
 
 export function step(world, dt) {
   world.time += dt; world.tick++;
-  for (const [id, at] of Object.entries(world.bossAt)) if (world.time >= at) { delete world.bossAt[id]; spawnBoss(world, BOSS_BY_ID.get(id)); }
+  updateBiome(world);
+  for (const n of world.resources) if (n.respawnAt && world.time >= n.respawnAt) {
+    if (world.structures.some(b => dist(b,n)<b.r+n.r)) { n.respawnAt = world.time + 5; continue; }
+    n.respawnAt = 0; n.hp = RESOURCE_TYPES[n.type].hp;
+    for (const e of [...Object.values(world.players),...world.animals]) if (!e.dead) pushOut(e,n,n.r);
+  }
+
+  for (const [id, at] of Object.entries(world.bossAt)) if (world.time >= at && BOSS_BY_ID.get(id).biome === world.biome) { delete world.bossAt[id]; spawnBoss(world, BOSS_BY_ID.get(id)); }
   for (const p of Object.values(world.players)) updatePlayer(world, p, dt);
   for (const a of [...world.animals]) updateAnimal(world, a, dt);
   updateStructures(world, dt);
@@ -636,12 +765,14 @@ export function step(world, dt) {
 }
 
 function moveSpeed(world, p, it) {
-  let s = BASE_SPEED * ((it?.speed ?? 100) / 100);
+  const mount = p.mounted && world.animals?.find(a => a.id === p.mounted && a.owner === p.id && !a.dead);
+  let s = mount ? petStats(PET_BY_ID.get(mount.species),mount.stage).speed * (item(p.saddle)?.mountBuff === 'racing' ? 1.1 : 1) : BASE_SPEED * ((it?.speed ?? 100) / 100);
   if (world.time < p.slowUntil) s *= .55;
   if (world.time < p.hasteUntil) s *= 1 + p.haste;
   const h = hat(p);
+  s *= h.move || 1;
   if (h.slow) s *= 1 - h.slow;
-  if (h.biome && h.biome === biomeAt(p.x, p.y).id) s *= 1.15;
+  if (h.biome && h.biome === world.biome) s *= 1.15;
   if (world.time < p.trappedUntil) s = 0;
   return s;
 }
@@ -651,7 +782,9 @@ function moveSpeed(world, p, it) {
 export function moveTamer(world, p, inp, speed, dt, harmless = false) {
   let mx = inp.mx, my = inp.my;
   const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
-  const accel = 1 - Math.exp(-dt * 10);
+  const boosting = !harmless && world.time < (p.boostUntil || 0);
+  if (boosting) { p.vx = Math.cos(p.boostAngle) * 1100; p.vy = Math.sin(p.boostAngle) * 1100; }
+  const accel = boosting ? 0 : 1 - Math.exp(-dt * 10);
   p.vx += (mx * speed - p.vx) * accel; p.vy += (my * speed - p.vy) * accel;
   p.x += p.vx * dt; p.y += p.vy * dt;
   collide(world, p, harmless);
@@ -674,17 +807,32 @@ function updatePlayer(world, p, dt) {
   if (world.tick % 10 === 0) {
     if (p.poison > 0) hurt(world, p, 4, null, { kind: 'poison', kb: 0 });
     if (p.burn > 0) hurt(world, p, 5, null, { kind: 'burn', kb: 0 });
+    if (ACCESSORY_BY_ID.get(p.wings)?.regen) heal(world,p,ACCESSORY_BY_ID.get(p.wings).regen * .5);
+    if (it.touch) for (const t of [...Object.values(world.players), ...world.animals]) if(t!==p && !t.dead && t.owner!==p.id && dist(p,t)<p.r+t.r+10) hurt(world,t,it.touch,p,{kb:0,kind:'spike'});
     if (p.hot > 0) { const h = Math.min(p.hot, 2.5); p.hot -= h; heal(world, p, h); }
   }
   p.poison = Math.max(0, p.poison - dt); p.burn = Math.max(0, p.burn - dt);
   if (p.dead) return;
-  if (inp.attack && world.time >= p.cd) {
+  const pressed = inp.attack && !p.attackHeld;
+  p.attackHeld = inp.attack;
+  const singleUse = it.kind || it.slot === 'food' || it.mount;
+  if (!inp.attack || p.pendingUse !== it.id) p.pendingUse = null;
+  if (pressed && singleUse) p.pendingUse = it.id;
+  if (inp.attack && world.time >= p.cd && (!singleUse || p.pendingUse === it.id)) {
+    p.pendingUse = null;
     // eat() checks and sets its own cooldown, so food must not start one first
     if (it.slot !== 'food') p.cd = world.time + (it.reload || .4);
     if (it.slot === 'food') { if (!eat(world, p)) p.cd = world.time + .2; }
     else if (it.kind) { if (place(world, p, it)) p.actionAt = world.time; else p.cd = world.time + .2; }
+    else if (it.catch) {
+      for (const n of nearbyResources(world,p.x,p.y,it.range+p.r)) if(n.type==='insect' && dist(n,p)<it.range+p.r) { n.hp=0;n.respawnAt=world.time+45;gainXp(world,p,75);gainGold(p,20);emit(world,{k:'gather',id:n.id,by:p.id,res:'gold',amt:20,ang:p.angle,x:n.x,y:n.y}); } p.actionAt=world.time;
+    }
+    else if (it.mount) {
+      const mount = world.animals.find(a=>a.owner===p.id && a.stage===2 && !a.dead && dist(a,p)<it.range);
+      p.mounted=p.mounted?null:mount?.id || null;p.saddle=p.mounted?it.id:null;p.actionAt=world.time;
+    }
     else if (it.ammo) { if (shoot(world, p, it)) p.actionAt = world.time; }
-    else { swing(world, p, it); p.actionAt = world.time; }
+    else { swing(world, p, it); p.actionAt = world.time; p.punchHand = 1 - (p.punchHand || 0); }
     if (p.actionAt === world.time) p.shieldUntil = 0;
   }
 }
@@ -696,20 +844,35 @@ function updateAnimal(world, a, dt) {
     if (!a.owner && world.time >= a.respawnAt) {
       const def = PET_BY_ID.get(a.species);
       world.animals.splice(world.animals.indexOf(a), 1);
-      spawnAnimal(world, def, world.random() < .6 ? 0 : 1);
+      if (def.biome === world.biome) spawnAnimal(world, def, world.random() < .15 ? 2 : world.random() < .6 ? 0 : 1);
     }
     return;
   }
   if (a.boss) return updateBoss(world, a, dt);
   const def = PET_BY_ID.get(a.species);
   const st = petStats(def, a.stage);
+  if (a.owner && world.time < (a.castUntil || 0)) {
+    a.vx=a.vy=0;
+    if (world.time >= a.castTick) {
+      a.castTick=world.time+.5; const owner=world.players[a.owner];
+      for (const t of [...Object.values(world.players),...world.animals]) {
+        if(t===a || t.dead || t.owner===a.owner || t.id===a.owner || dist(t,a)>240+t.r) continue;
+        const damage=hurt(world,t,([2,3,4][a.stage])*(t.items?1:2)*petDamageVs(a,t).mult,a,{kind:a.castKind==='vines'?'plant':'burn',kb:0});
+        if(a.castKind==='vines') { heal(world,a,damage*.5);if(owner)heal(world,owner,damage*.25);if(t.items)t.slowUntil=world.time+1; }
+      }
+    }
+    return;
+  }
   let goal = null, speed = 0;
   a.moving = false;
   if (a.owner) {
     const owner = world.players[a.owner];
     if (!owner) { world.animals.splice(world.animals.indexOf(a), 1); return; }
+    a.mountBuff = owner.mounted === a.id ? item(owner.saddle)?.mountBuff : null;
+    if (owner.mounted === a.id) { a.x=owner.x;a.y=owner.y;a.angle=owner.angle;a.vx=owner.vx;a.vy=owner.vy; if(a.mountBuff==='honey')heal(world,a,a.maxHp*.01*dt);return; }
     let target = a.target && (world.players[a.target] || world.animals.find(x => x.id === a.target));
-    if (target && (target.dead || target.hp <= 0 || target.id === owner.id || target.owner === owner.id || target.sleep || dist(target, owner) > 800 || world.time < (target.shieldUntil || 0))) target = a.target = null;
+    if (target && (target.dead || target.hp <= 0 || target.id === owner.id || target.owner === owner.id || (!a.lockedTarget && dist(target, owner) > 1000) || world.time < (target.shieldUntil || 0))) target = a.target = null;
+    if (!target) a.lockedTarget = null;
     if (!target && !owner.dead && a.mode !== 'stop') {
       // defend: whoever just hurt the tamer, or (attack mode) the nearest hostile
       const attacker = owner.lastHitBy && (world.players[owner.lastHitBy] || world.animals.find(x => x.id === owner.lastHitBy));
@@ -729,24 +892,26 @@ function updateAnimal(world, a, dt) {
       if (target) a.target = target.id;
     }
     if (target && a.mode !== 'stop') {
-      goal = target; speed = st.speed * 1.1;
-      if (dist(a, target) < a.r + target.r + 16 && world.time >= a.cd) {
+      goal = target; speed = st.speed;
+      if (biteReady(world, a, target)) {
         a.cd = world.time + 1; a.attackAt = world.time;
         const m = petDamageVs(a, target).mult, buff = a.buffUntil > world.time ? 1.5 : 1;
         const dealt = hurt(world, target, st.bite * levelBoost(a.level) * m * buff * (target.items ? 1 : 1.2), a, { knock: 30, crit: m > 1.5 });
         petXp(world, a, dealt * .5);
       }
     } else if (a.mode === 'stop' || a.mode === 'move') {
-      if (a.post && dist(a, a.post) > 20) { goal = a.post; speed = st.speed * 1.2; }
+      if (a.post) { goal = roam(world, a, a.post, 110); speed = st.speed * .45; }
     } else if (!owner.dead) {
       const slot = owner.pets.indexOf(a.id);
       const ang = Math.atan2(owner.vy, owner.vx) + Math.PI + (slot - 1) * .8;
       const moving = Math.hypot(owner.vx, owner.vy) > 40;
       const back = moving ? ang : owner.angle + Math.PI + (slot - 1) * .9;
       const fx = owner.x + Math.cos(back) * (owner.r + a.r + 30), fy = owner.y + Math.sin(back) * (owner.r + a.r + 30);
-      const d = Math.hypot(fx - a.x, fy - a.y);
-      if (d > 25) { goal = { x: fx, y: fy }; speed = Math.min(st.speed * 1.5, d * 4 + 60); }
-      if (dist(a, owner) > 1300) { a.x = owner.x - 60; a.y = owner.y + 40; a.vx = a.vy = 0; }
+      const idle = !moving ? roam(world, a, owner, 150) : null;
+      if (idle) { goal = idle; speed = dist(a, owner) > 230 ? st.speed : st.speed * .45; }
+      const d = moving ? Math.hypot(fx - a.x, fy - a.y) : 0;
+      if (d > 25) { goal = { x: fx, y: fy }; speed = Math.min(st.speed, d * 4 + 60); }
+      if (!a.lockedTarget && dist(a, owner) > 2500 && !visibleToPlayer(world, a)) { a.x = owner.x - 60; a.y = owner.y + 40; a.vx = a.vy = 0; }
     }
     // pets regenerate after 5s without damage
     if (world.time - a.lastHurtAt > 5 && a.hp < a.maxHp) a.hp = Math.min(a.maxHp, a.hp + dt * a.maxHp * (owner.hat === 'flower' ? .04 : .02));
@@ -763,7 +928,7 @@ function updateAnimal(world, a, dt) {
     }
     let prey = a.target && (world.players[a.target] || world.animals.find(x => x.id === a.target && !x.dead));
     if (prey && (prey.dead || prey.hp <= 0 || dist(prey, a) > 900 || dist(a, a.home) > 1500 || world.time < (prey.shieldUntil || 0))) { prey = null; a.target = null; a.state = 'wander'; a.angry = false; }
-    if (!prey && def.temper === 'aggressive' && a.stage > 0) {
+    if (!prey && def.temper === 'aggressive' && a.stage > 0 && world.time >= (a.calmUntil || 0)) {
       let bd = 340 ** 2;
       for (const p of Object.values(world.players)) {
         if (p.dead || world.time < p.shieldUntil) continue;
@@ -773,30 +938,31 @@ function updateAnimal(world, a, dt) {
     }
     if (prey && a.state === 'flee' && world.time < a.fleeUntil) {
       const ang = Math.atan2(a.y - prey.y, a.x - prey.x);
-      goal = { x: a.x + Math.cos(ang) * 200, y: a.y + Math.sin(ang) * 200 }; speed = st.speed * 1.05;
+      goal = { x: a.x + Math.cos(ang) * 200, y: a.y + Math.sin(ang) * 200 }; speed = st.speed;
     } else if (prey && a.state === 'chase') {
       goal = prey; speed = st.speed;
-      if (dist(a, prey) < a.r + prey.r + 16 && world.time >= a.cd) {
+      if (biteReady(world, a, prey)) {
         a.cd = world.time + 1; a.attackAt = world.time;
-        hurt(world, prey, st.bite * (prey.items ? 1 : 1.2), a, { knock: 30 });
+        hurt(world, prey, st.bite * petDamageVs(a, prey).mult * (prey.items ? 1 : 1.2), a, { knock: 30 });
       }
     } else {
       if (a.state === 'flee' && world.time >= a.fleeUntil) { a.state = 'wander'; a.target = null; }
       if (world.time > a.wanderAt) {
         a.wanderAt = world.time + 2 + world.random() * 4;
         a.wanderGoal = world.random() < .35 ? null : { x: clamp(a.home.x + (world.random() - .5) * 800, 120, WORLD.w - 120), y: clamp(a.home.y + (world.random() - .5) * 800, 120, WORLD.h - 120) };
-        // wild animals keep to their own biome
-        if (a.wanderGoal && biomeAt(a.wanderGoal.x, a.wanderGoal.y).id !== def.biome) a.wanderGoal = null;
+
       }
       if (a.wanderGoal) { goal = a.wanderGoal; speed = st.speed * .35; if (dist(a, goal) < 40) a.wanderGoal = null; }
     }
   }
+  if (!goal || !a.target) { a.contactSince = null; a.contactTarget = null; }
   steer(world, a, goal, speed, dt);
 }
 
 function steer(world, a, goal, speed, dt) {
   if (goal) {
-    const dx = goal.x - a.x, dy = goal.y - a.y, d = Math.hypot(dx, dy);
+    const waypoint = navigationGoal(world, a, goal);
+    const dx = waypoint.x - a.x, dy = waypoint.y - a.y, d = Math.hypot(dx, dy);
     if (d > 1) {
       const want = Math.atan2(dy, dx);
       a.angle += angleDiff(a.angle, want) * Math.min(1, dt * 10);
@@ -812,45 +978,50 @@ function steer(world, a, goal, speed, dt) {
 
 function updateBoss(world, a, dt) {
   const def = BOSS_BY_ID.get(a.boss);
-  // asleep until hit; heals while nobody is fighting it and dozes off again when left alone
-  if (world.time - a.lastHurtAt > 15 && a.hp < a.maxHp) { a.hp = Math.min(a.maxHp, a.hp + a.maxHp * .02 * dt); if (a.hp > a.maxHp * .99) { a.dmgBy = {}; a.waves = 0; } }
+  if (world.time - a.lastHurtAt > 20 && a.hp < a.maxHp) a.hp = Math.min(a.maxHp, a.hp + a.maxHp * .015 * dt);
   if (a.sleep) return;
   const targets = [...Object.values(world.players).filter(p => !p.dead && world.time >= p.shieldUntil), ...world.animals.filter(x => x.owner && !x.dead)];
-  if (world.time - a.lastHurtAt > 20 && !targets.some(t => dist2(t, a) < 900 ** 2)) { a.sleep = true; return; }
-  // a ring of thorns every few seconds at anyone in range
-  if (world.time >= a.volleyAt && targets.some(t => dist2(t, a) < 750 ** 2)) {
-    a.volleyAt = world.time + 4.5;
-    const n = 12, spin = world.random() * TAU, speed = 520;
-    for (let i = 0; i < n; i++) {
-      const ang = spin + i / n * TAU;
-      world.projectiles.push({ id: `j${world.nextId++}`, x: a.x + Math.cos(ang) * (a.r + 10), y: a.y + Math.sin(ang) * (a.r + 10), vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, dmg: Math.round(def.dmg * .3), owner: a.id, boss: true, until: world.time + 1.5, r: 14, kind: 'thorn' });
-    }
-  }
-  let best = null, bd = (a.r + def.reach) ** 2;
-  for (const t of targets) { const d = dist2(t, a); if (d < bd) { bd = d; best = t; } }
-  if (best) {
-    a.angle += angleDiff(a.angle, Math.atan2(best.y - a.y, best.x - a.x)) * Math.min(1, dt * 4);
-    if (world.time >= a.cd) {
-      a.cd = world.time + def.every; a.attackAt = world.time;
-      // a sweeping blow that hits everything in a wide arc
-      for (const t of targets) {
-        const d = dist(t, a);
-        if (d - t.r > a.r + def.reach * .7) continue;
-        if (Math.abs(angleDiff(a.angle, Math.atan2(t.y - a.y, t.x - a.x))) > 1.3) continue;
-        hurt(world, t, def.dmg, a, { knock: 140 });
+  const near = targets.filter(t => dist(t, a) < 950);
+  if (world.time - a.lastHurtAt > 25 && !near.length) { a.sleep = true; a.pending = null; return; }
+  // Each species repeats its own sequence; attacks stay in world space and never track a player's facing.
+  if (a.pending && world.time >= a.pending.at) {
+    const attack = a.pending; a.pending = null; a.attackAt = world.time;
+    if (attack.kind === 'ring') {
+      const n = a.boss === 'frost-golem' ? 8 : 12;
+      for (let i = 0; i < n; i++) {
+        const angle = i / n * TAU + (a.phase || 0) * .22, speed = 480;
+        world.projectiles.push({ id: `j${world.nextId++}`, x: a.x + Math.cos(angle) * (a.r + 10), y: a.y + Math.sin(angle) * (a.r + 10), vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, dmg: def.dmg * .5, element: def.types[0], owner: a.id, boss: true, until: world.time + 2, r: 16, kind: def.biome === 'volcano' ? 'fireball' : 'thorn' });
       }
+    } else if (['poison','rocks','roots','whirlpool'].includes(attack.kind)) {
+      const area = ['roots','whirlpool'].includes(attack.kind);
+      const points = attack.kind === 'whirlpool' ? [{x:a.x,y:a.y}] : attack.points;
+      for (const point of points) world.hazards.push({ id: `h${world.nextId++}`, kind: attack.kind === 'rocks' ? 'meteor' : attack.kind, ...point, r: area ? 420 : attack.kind === 'poison' ? 150 : 115, at: world.time + .7, until: world.time + (attack.kind === 'rocks' ? .7 : 5), owner: a.id, element: attack.kind === 'poison' || attack.kind === 'whirlpool' ? 'poison' : def.types[0], dmg: def.dmg });
+      if (attack.kind === 'whirlpool') a.invulnerableUntil = world.time + 5;
+    } else {
+      const reach = attack.kind === 'tentacles' ? 580 : attack.kind === 'roots' ? 500 : 400;
+      for (const t of targets) {
+        if (dist(t, a) > reach + t.r) continue;
+        if (attack.kind === 'tentacles' && Math.abs(Math.sin(Math.atan2(t.y-a.y, t.x-a.x) * 4)) > .5) continue;
+        hurt(world, t, def.dmg, a, { knock: 120, element: def.types[0], skill:true });
+        if (t.items && ['roots', 'freeze'].includes(attack.kind)) { t.slowUntil = world.time + 2; if (attack.kind === 'freeze') t.trappedUntil = world.time + .6; }
+      }
+      emit(world, { k: 'impact', x: a.x, y: a.y });
     }
   }
-  // minion waves at 75%, 50% and 25% health
+  if (!a.pending && near.length && world.time >= a.cd) {
+    a.phase = (a.phase ?? -1) + 1;
+    const kind = def.cycle[a.phase % def.cycle.length];
+    a.pending = { kind, at: world.time + .9, points: near.slice(0, 4).map(t => ({ x: t.x, y: t.y })) };
+    a.cd = world.time + def.every + 1.1;
+    emit(world, { k: 'bosswindup', id: a.id, x: a.x, y: a.y, kind, at: a.pending.at });
+    world.hazards.push({ id: `h${world.nextId++}`, kind: 'warning', x: a.x, y: a.y, r: kind === 'tentacles' ? 580 : 400, at: a.pending.at, until: a.pending.at, owner: a.id, dmg: 0 });
+  }
   const wave = a.hp < a.maxHp * .25 ? 3 : a.hp < a.maxHp * .5 ? 2 : a.hp < a.maxHp * .75 ? 1 : 0;
   if (wave > a.waves) {
     a.waves = wave;
-    const def2 = PET_BY_ID.get(def.minions);
     for (let i = 0; i < 3; i++) {
-      const m = spawnAnimal(world, def2, 1, { x: a.x + Math.cos(i * 2.1) * (a.r + 80), y: a.y + Math.sin(i * 2.1) * (a.r + 80) });
-      m.angry = true; m.state = 'chase';
-      const near = Object.values(world.players).filter(p => !p.dead).sort((p, q) => dist2(p, a) - dist2(q, a))[0];
-      m.target = near?.id || null;
+      const m = spawnAnimal(world, PET_BY_ID.get(def.minions), wave === 3 ? 2 : 1, { x: a.x + Math.cos(i*2.1)*(a.r+90), y: a.y + Math.sin(i*2.1)*(a.r+90) });
+      m.sleep = false; m.angry = true; m.state = 'chase'; m.target = near[0]?.id || null;
     }
     emit(world, { k: 'wave', name: def.name, x: a.x, y: a.y });
   }
@@ -864,7 +1035,9 @@ function petCommand(world, p, cmd) {
   for (const id of ids) {
     const a = world.animals.find(x => x.id === id);
     if (!a) continue;
-    a.mode = mode; a.target = null;
+    a.mode = mode; a.target = null; a.lockedTarget = null; a.wanderAt = 0;
+    const target = cmd.target && (world.players[cmd.target] || world.animals.find(t => t.id === cmd.target));
+    if (target && !target.dead && target.id !== p.id && target.owner !== p.id) { a.mode = 'attack'; a.target = target.id; a.lockedTarget = target.id; }
     if (mode === 'move' && Number.isFinite(+cmd.x) && Number.isFinite(+cmd.y)) a.post = { x: clamp(+cmd.x, 0, WORLD.w), y: clamp(+cmd.y, 0, WORLD.h) };
     else if (mode === 'stop') a.post = { x: a.x, y: a.y };
     else a.post = null;
@@ -873,30 +1046,32 @@ function petCommand(world, p, cmd) {
 
 export function skillCooldown(a) {
   const def = PET_BY_ID.get(a.species);
-  return SKILLS[def.skill].cd - a.stage * 2.5;
+  const special = { wolf:[30,28,25], rabbit:[20,18,15], lynx:[22,20,18], hedgehog:[21,18,15] };
+  return special[a.species]?.[a.stage] ?? SKILLS[def.skill].cd - a.stage * 2.5;
 }
 
 function petSkills(world, p, slot) {
   const ids = slot >= 0 ? [p.pets[slot]] : p.pets;
   for (const id of ids) {
     const a = world.animals.find(x => x.id === id);
-    if (!a || a.dead || world.time - (a.skillAt ?? -99) < skillCooldown(a)) continue;
+    if (!a || a.dead || world.time < (a.skillBlockedUntil || 0) || world.time - (a.skillAt ?? -99) < skillCooldown(a)) continue;
     const def = PET_BY_ID.get(a.species);
     const foes = [...Object.values(world.players).filter(o => o.id !== p.id && !o.dead && world.time >= o.shieldUntil), ...world.animals.filter(o => !o.dead && o.owner !== p.id && !o.sleep)];
     const near = foes.filter(o => dist(o, a) < 360 + (o.r || 0)).sort((x, y) => dist2(x, a) - dist2(y, a));
     const power = petStats(def, a.stage).bite;
-    const hit = (o, mul, opts) => hurt(world, o, power * mul * (o.items ? .5 : 1) * petDamageVs(a, o).mult, a, opts);
+    const hit = (o, mul, opts) => hurt(world, o, power * mul * (a.mountBuff === 'crystal' ? 1.1 : 1) * (o.items ? .5 : 1) * petDamageVs(a, o).mult, a, { ...opts, skill:true });
     if (!near.length && !['rally', 'frost'].includes(def.skill)) continue;
     a.skillAt = world.time;
     switch (def.skill) {
-      case 'blaze': for (const o of near.filter(o => dist(o, a) < 220 + (o.r || 0))) { hit(o, 3, { kind: 'burn', knock: 50 }); if (o.items) o.burn = 3; } break;
-      case 'vines': { const o = near[0]; const d = hit(o, 3, { kind: 'plant', kb: 0 }); heal(world, a, d); if (o.items) o.slowUntil = world.time + 3; else o.cd = world.time + 2; break; }
+      case 'hindrance': { const o=near[0]; if (o.items) o.buildBlockedUntil=world.time+4; else o.skillBlockedUntil=world.time+4; hit(o,1,{kind:'burn',kb:0}); if(o.items) o.burn=4; break; }
+      case 'blaze': a.castUntil = world.time+4; a.castKind='blaze'; a.castTick=world.time+.5; for (const o of near.filter(o => dist(o, a) < 220 + (o.r || 0))) { hit(o, 3, { kind: 'burn', knock: 50 }); if (o.items) o.burn = 3; } break;
+      case 'vines': { const o = near[0]; const d = hit(o, 3, { kind: 'plant', kb: 0 }); heal(world, a, d); heal(world,p,d*.5); a.castUntil = world.time+4; a.castKind='vines'; a.castTick=world.time+.5; if (o.items) o.slowUntil = world.time + 3; else o.cd = world.time + 2; break; }
       case 'wave': for (const o of near.slice(0, 5)) hit(o, 2, { kind: 'water', knock: 260 }); break;
       case 'thunder': { const o = near[0]; hit(o, 4, { kind: 'shock', kb: 0 }); if (world.random() < .5) { if (o.items) o.trappedUntil = world.time + 1.5; else o.cd = world.time + 2; } break; }
       case 'frost': for (const o of near.filter(o => dist(o, a) < 260 + (o.r || 0))) { hit(o, 2, { kind: 'ice', kb: 0 }); if (world.random() < .25 && o.items) o.trappedUntil = world.time + 1.5; else if (o.items) o.slowUntil = world.time + 2.5; } break;
       case 'venom': for (const o of near.filter(o => dist(o, a) < 240 + (o.r || 0))) { hit(o, 1.5, { kind: 'poison', kb: 0 }); if (o.items) o.poison = 4; } break;
       case 'boulder': { const o = near[0]; const ang = Math.atan2(o.y - a.y, o.x - a.x); a.vx = Math.cos(ang) * 1400; a.vy = Math.sin(ang) * 1400; hit(o, 3.5, { kind: 'rock', knock: 200 }); break; }
-      case 'scratch': { const o = near[0]; for (let i = 0; i < 3; i++) hit(o, 1.6, { kind: 'claw', knock: 20 }); break; }
+      case 'scratch': { const o = near[0]; const ang=Math.atan2(o.y-a.y,o.x-a.x); a.vx=Math.cos(ang)*800; a.vy=Math.sin(ang)*800; for (let i = 0; i < 3; i++) hit(o, 1.6, { kind: 'claw', knock: 20 }); break; }
       case 'swarm': for (const o of near.slice(0, 6)) hit(o, 1.8, { kind: 'insect', knock: 20 }); break;
       case 'shade': { const o = near[0]; const ang = Math.atan2(o.y - p.y, o.x - p.x); a.x = o.x + Math.cos(ang) * (o.r + a.r + 4); a.y = o.y + Math.sin(ang) * (o.r + a.r + 4); hit(o, 4, { kind: 'shadow', knock: 60 }); break; }
       case 'rally': heal(world, p, 25); for (const id2 of p.pets) { const b = world.animals.find(x => x.id === id2); if (b) { heal(world, b, b.maxHp * .25); b.buffUntil = world.time + 6; } } break;
@@ -915,7 +1090,7 @@ function updateStructures(world, dt) {
     switch (it.kind) {
       case 'windmill':
         if (owner && !owner.dead && world.time - (s.paidAt ?? s.born) >= it.every) {
-          s.paidAt = world.time; gainGold(owner, it.gold); gainXp(world, owner, it.gold * .5);
+          s.paidAt = world.time; gainGold(owner, it.gold);
           emit(world, { k: 'mill', to: owner.id, x: s.x, y: s.y, amt: it.gold });
         }
         break;
@@ -924,7 +1099,7 @@ function updateStructures(world, dt) {
         for (const t of [...Object.values(world.players), ...world.animals]) {
           if (t.dead || t.id === s.owner || t.owner === s.owner || t.sleep || t.boss || t.hp <= 0) continue;
           if ((t.x - s.x) ** 2 + (t.y - s.y) ** 2 > (s.r + t.r + 8) ** 2) continue;
-          hurt(world, t, it.touch * (t.items ? 1 : 2), { x: s.x, y: s.y, id: s.owner, owner: s.owner }, { kind: 'spike', knock: 25 });
+          hurt(world, t, it.touch * (t.items ? 1 : 2), { x: s.x, y: s.y, id: s.owner, owner: s.owner }, { kind: 'spike', kb: 0 });
         }
         break;
       case 'trap':
@@ -942,7 +1117,7 @@ function updateStructures(world, dt) {
       case 'boost':
         for (const t of Object.values(world.players)) {
           if (t.dead) continue;
-          if ((t.x - s.x) ** 2 + (t.y - s.y) ** 2 < (s.r + t.r * .3) ** 2) { t.vx = Math.cos(s.rot) * 1100; t.vy = Math.sin(s.rot) * 1100; }
+          if ((t.x - s.x) ** 2 + (t.y - s.y) ** 2 < (s.r + t.r * .3) ** 2) { t.boostUntil = world.time + (it.id === 'big-boost-pad' ? 1.05 : .75); t.boostAngle = s.rot; t.vx = Math.cos(s.rot) * 1100; t.vy = Math.sin(s.rot) * 1100; }
         }
         break;
       case 'heal':
@@ -960,7 +1135,7 @@ function updateStructures(world, dt) {
           const d = dist2(t, s); if (d < bd) { bd = d; best = t; }
         }
         for (const t of world.animals) {
-          if (t.dead || t.owner === s.owner || t.sleep || !(t.target === s.owner || t.owner)) continue;
+          if (t.dead || t.owner === s.owner) continue;
           const d = dist2(t, s); if (d < bd) { bd = d; best = t; }
         }
         if (best) {
@@ -980,7 +1155,7 @@ function updateProjectiles(world, dt) {
     j.x += j.vx * dt; j.y += j.vy * dt;
     if (world.time > j.until) continue;
     let hit = false;
-    for (const n of nearbyResources(world, j.x, j.y, 140)) if ((n.x - j.x) ** 2 + (n.y - j.y) ** 2 < (n.r * .85) ** 2) { hit = true; break; }
+    for (const n of nearbyResources(world, j.x, j.y, 140)) if (RESOURCE_TYPES[n.type].solid !== false && (n.x - j.x) ** 2 + (n.y - j.y) ** 2 < (n.r * .85) ** 2) { hit = true; break; }
     const by = { x: j.x - j.vx * .05, y: j.y - j.vy * .05, id: j.owner, owner: j.owner };
     const it = j.item ? item(j.item) : null;
     if (!hit) for (const s of world.structures) {
@@ -1005,9 +1180,10 @@ function projectileHit(world, j, it, t, by) {
   if (it?.tameTool && t.sleep && !t.owner) {
     const def = PET_BY_ID.get(t.species);
     if (def.tool === it.tameTool) {
-      const reset = world.random() < (it.safer ? .025 : .05);
+      const reset = world.random() < ((it.safer ? .025 : .05) * (shooter ? hat(shooter).luck || 1 : 1));
       t.bonus = reset ? 0 : (t.bonus || 0) + 1;
-      t.wakeAt = Math.max(t.wakeAt, world.time + 6);
+      if (reset) { t.sleep = false; t.state = 'wander'; t.target = null; t.angry = false; t.sleepAt = world.time + 40; t.calmUntil = world.time + 5; }
+      else t.wakeAt = Math.max(t.wakeAt, world.time + 6);
       emit(world, { k: 'bonus', id: t.id, x: t.x, y: t.y - t.r, bonus: t.bonus, reset, to: j.owner });
     } else emit(world, { k: 'msg', to: j.owner, text: `${def.name} needs the ${def.tool === 'appletor' ? 'Appletor' : 'Slingshot'}` });
     return;
@@ -1016,30 +1192,38 @@ function projectileHit(world, j, it, t, by) {
   if (it?.healPet) { if (t.items) heal(world, t, it.healPlayer); else heal(world, t, it.healPet); return; }
   if (t.owner === j.owner) return;
   const dmg = j.dmg ?? (t.items ? it?.dmg : it?.adm) ?? 10;
-  const dealt = hurt(world, t, dmg, by, { knock: j.kind === 'fireball' ? 40 : 20, kind: j.kind === 'fireball' ? 'burn' : 'hit' });
+  const dealt = hurt(world, t, dmg, by, { knock: j.kind === 'fireball' ? 40 : 20, kind: j.kind === 'fireball' ? 'burn' : 'hit', element: j.element, skill:!!j.boss });
   if (j.kind === 'fireball' && t.items && dealt) t.burn = 3;
-  if (shooter && dealt) for (const id of shooter.pets) { const a = world.animals.find(x => x.id === id); if (a && a.mode !== 'stop' && !t.boss) a.target = t.owner ? t.owner : t.id; }
+  if (shooter && dealt) for (const id of shooter.pets) { const a = world.animals.find(x => x.id === id); if (a && a.mode !== 'stop' && !a.lockedTarget) a.target = t.owner ? t.owner : t.id; }
 }
 
 // Volcano meteors: a warning circle, then a heavy impact, near whoever is in the volcano.
 function updateHazards(world, dt) {
   if (world.time > world.meteorAt) {
-    world.meteorAt = world.time + 2.5 + world.random() * 3;
-    const living = Object.values(world.players).filter(p => !p.dead && biomeAt(p.x, p.y).meteors);
-    if (living.length) {
-      const p = living[Math.floor(world.random() * living.length)];
-      const ang = world.random() * TAU, d = world.random() * 500;
-      world.hazards.push({ id: `h${world.nextId++}`, kind: 'meteor', x: p.x + Math.cos(ang) * d, y: p.y + Math.sin(ang) * d, r: 110, at: world.time + 1.6 });
-    }
+    world.meteorAt = world.time + 3 + world.random() * 3;
+    const p = Object.values(world.players).find(p => !p.dead && world.biome === 'volcano');
+    if (p) world.hazards.push({ id: `h${world.nextId++}`, kind: 'meteor', x: p.x + (world.random()-.5)*500, y: p.y + (world.random()-.5)*500, r: 110, at: world.time + 1.6, dmg: 80, element: 'fire' });
   }
   const keep = [];
   for (const h of world.hazards) {
     if (world.time < h.at) { keep.push(h); continue; }
+    if (h.kind === 'warning') continue;
+    if (['poison','roots','whirlpool'].includes(h.kind) && world.time < h.until) {
+      keep.push(h);
+      if (world.time < (h.tickAt || 0)) continue;
+      h.tickAt = world.time + .5;
+    } else if (['poison','roots','whirlpool'].includes(h.kind)) continue;
+    const source = world.animals.find(a => a.id === h.owner) || { x: h.x, y: h.y, id: h.owner };
     for (const t of [...Object.values(world.players), ...world.animals]) {
-      if (t.dead || t.boss || t.sleep) continue;
-      if ((t.x - h.x) ** 2 + (t.y - h.y) ** 2 < (h.r + t.r * .5) ** 2) hurt(world, t, 80, { x: h.x, y: h.y }, { kind: 'burn', knock: 120 });
+      if (t.dead || t.boss || t.sleep || h.owner && !t.items && !t.owner) continue;
+      if (dist(t, h) >= h.r + t.r * .5) continue;
+      const area = ['poison','roots','whirlpool'].includes(h.kind);
+      const dealt = hurt(world, t, area ? h.kind === 'whirlpool' ? 9 : 6 : h.dmg || 80, source, { kind: h.kind === 'poison' ? 'poison' : 'burn', kb: area ? 0 : 1, element: h.element, skill:true });
+      if (h.kind === 'roots') { if (source.hp) source.hp = Math.min(source.maxHp,source.hp+dealt*.3); if (t.items) t.slowUntil = world.time+1; }
+      if (h.kind === 'whirlpool') { const d = dist(t,h)||1; t.vx += (h.x-t.x)/d*350; t.vy += (h.y-t.y)/d*350; }
+      if (h.kind === 'poison' && t.items) { t.poison = 3; t.blindUntil = world.time + 2; }
     }
-    emit(world, { k: 'impact', x: h.x, y: h.y });
+    if (!['poison','roots','whirlpool'].includes(h.kind)) emit(world, { k: 'impact', x: h.x, y: h.y });
   }
   world.hazards = keep;
 }
@@ -1050,15 +1234,17 @@ function botThink(world, p) {
   const inp = p.input;
   if (p.choices.length) {
     const offer = currentOffer(p);
-    const pick = offer.find(id => /sword|axe|katana|spear/.test(id)) || offer.find(id => item(id).slot === 'windmill') || offer[Math.floor(world.random() * offer.length)];
+    const family = p.botFamily ||= ['sword','axe','hammer','daggers','spear','gloves'][Math.floor(world.random()*6)];
+    const pick = offer.find(id => item(id).family === family) || offer.find(id => item(id).slot === 'windmill') || offer[Math.floor(world.random() * offer.length)];
     if (pick) choose(world, p, pick); else p.choices.shift();
   }
   p.brainAt ??= 0;
-  if (world.time < p.brainAt) { if (p.goal) aimAndMove(p, p.goal, p.goalRange || 0); return; }
+  if (world.time < p.brainAt) { if (p.goal) aimAndMove(world, p, p.goal, p.goalRange || 0); return; }
   p.brainAt = world.time + .25 + world.random() * .25;
   const sel = slot => Math.max(0, p.items.findIndex(id => item(id).slot === slot));
   inp.attack = false;
-  if (p.hp < p.maxHp * .6 && p.res.food >= 5) { inp.sel = sel('food'); inp.attack = true; p.goal = null; inp.mx = inp.my = 0; return; }
+  if (p.hp < p.maxHp * .6 && p.res.food >= 5) eat(world, p);
+  p.aggressive ??= world.random() < .45;
   // fight weaker players nearby, avoid stronger ones
   let foe = null, fd = 380 ** 2;
   for (const o of Object.values(world.players)) {
@@ -1066,11 +1252,11 @@ function botThink(world, p) {
     const d = dist2(o, p); if (d < fd) { fd = d; foe = o; }
   }
   if (foe && world.time > p.shieldUntil) {
-    if (p.age >= foe.age && p.hp > p.maxHp * .5) {
+    if (p.aggressive || p.age >= foe.age && p.hp > p.maxHp * .5) {
       inp.sel = sel('primary'); p.goal = foe; p.goalRange = 30; inp.attack = Math.sqrt(fd) < p.r + foe.r + (item(p.items[sel('primary')]).range || 20) + 10;
-      aimAndMove(p, foe, 30); return;
+      aimAndMove(world, p, foe, 30); return;
     }
-    if (p.hp < p.maxHp * .5) { p.goal = { x: p.x * 2 - foe.x, y: p.y * 2 - foe.y }; p.goalRange = 0; aimAndMove(p, p.goal, 0); return; }
+    if (!p.aggressive && p.hp < p.maxHp * .5) { p.goal = { x: p.x * 2 - foe.x, y: p.y * 2 - foe.y }; p.goalRange = 0; aimAndMove(world, p, p.goal, 0); return; }
   }
   const baby = tameTarget(world, p);
   if (baby && p.pets.length < MAX_PETS && world.random() < .5) { command(world, p.id, { t: 'tame' }); }
@@ -1078,7 +1264,7 @@ function botThink(world, p) {
   if (!p.pets.length && !baby) {
     let best = null, bd = 900 ** 2;
     for (const a of world.animals) if (a.sleep && !a.owner && !a.boss) { const d = dist2(a, p); if (d < bd) { bd = d; best = a; } }
-    if (best) { p.goal = best; p.goalRange = best.r + 30; aimAndMove(p, best, best.r + 30); return; }
+    if (best) { p.goal = best; p.goalRange = best.r + 30; aimAndMove(world, p, best, best.r + 30); return; }
   }
   if (p.pets.length && world.random() < .1) command(world, p.id, { t: 'skill' });
   const mills = world.structures.filter(s => s.owner === p.id && item(s.item).kind === 'windmill').length;
@@ -1089,7 +1275,7 @@ function botThink(world, p) {
   const want = p.res.food < 30 ? 'food' : p.res.stone < 40 ? 'stone' : p.res.wood < 80 ? 'wood' : world.random() < .5 ? 'gold' : 'wood';
   let node = null, nd = Infinity;
   for (const n of nearbyResources(world, p.x, p.y, 1000)) {
-    if (n.type === 'cactus') continue;
+    if (n.type === 'cactus' || RESOURCE_TYPES[n.type].catchOnly) continue;
     const d = dist2(n, p) * (RESOURCE_TYPES[n.type].yields === want ? 1 : 4);
     if (d < nd) { nd = d; node = n; }
   }
@@ -1097,12 +1283,14 @@ function botThink(world, p) {
   if (!node) { p.goal = { x: clamp(p.x + (world.random() - .5) * 1400, 200, WORLD.w - 200), y: clamp(p.y + (world.random() - .5) * 1400, 200, WORLD.h - 200) }; p.goalRange = 20; return; }
   p.goal = node; p.goalRange = node.r + 10;
   inp.attack = dist(p, node) < node.r + p.r + 40;
-  aimAndMove(p, node, node.r + 10);
+  aimAndMove(world, p, node, node.r + 10);
 }
-function aimAndMove(p, goal, range) {
-  const dx = goal.x - p.x, dy = goal.y - p.y, d = Math.hypot(dx, dy) || 1;
+function aimAndMove(world, p, goal, range) {
+  const direct = dist(p, goal) <= range + p.r;
+  const waypoint = direct ? goal : navigationGoal(world, p, goal);
+  const dx = waypoint.x - p.x, dy = waypoint.y - p.y, d = Math.hypot(dx, dy) || 1;
   p.input.angle = Math.atan2(dy, dx);
-  if (d > range + p.r) { p.input.mx = dx / d; p.input.my = dy / d; } else { p.input.mx = 0; p.input.my = 0; }
+  if (!direct) { p.input.mx = dx / d; p.input.my = dy / d; } else { p.input.mx = 0; p.input.my = 0; }
 }
 
 export function fillBots(world, count) {
@@ -1121,10 +1309,10 @@ const A = v => Math.round(v * 100) / 100;
 const T = v => Math.round(v * 100) / 100;
 
 export function encodePlayer(p) {
-  return [p.id, p.name, p.skin, p.hat, R(p.x), R(p.y), A(p.angle), Math.ceil(p.hp), p.maxHp, p.dead ? 1 : 0, p.age, R(p.res.gold), p.held, T(p.actionAt), T(p.hitAt), T(p.shieldUntil), p.pets.length, p.bot ? 1 : 0, T(p.trappedUntil)];
+  return [p.id, p.name, p.skin, p.hat, R(p.x), R(p.y), A(p.angle), Math.ceil(p.hp), p.maxHp, p.dead ? 1 : 0, p.age, R(p.res.gold), p.held, T(p.actionAt), T(p.hitAt), T(p.shieldUntil), p.pets.length, p.bot ? 1 : 0, T(p.trappedUntil), p.punchHand || 0, p.wings || 'none'];
 }
 export function decodePlayer(r) {
-  return { id: r[0], name: r[1], skin: r[2], hat: r[3], x: r[4], y: r[5], angle: r[6], hp: r[7], maxHp: r[8], dead: !!r[9], age: r[10], gold: r[11], held: r[12], actionAt: r[13], hitAt: r[14], shieldUntil: r[15], petCount: r[16], bot: !!r[17], trappedUntil: r[18], r: PLAYER_R };
+  return { id: r[0], name: r[1], skin: r[2], hat: r[3], x: r[4], y: r[5], angle: r[6], hp: r[7], maxHp: r[8], dead: !!r[9], age: r[10], gold: r[11], held: r[12], actionAt: r[13], hitAt: r[14], shieldUntil: r[15], petCount: r[16], bot: !!r[17], trappedUntil: r[18], punchHand: r[19] || 0, wings: r[20] || 'none', r: PLAYER_R };
 }
 export function encodeAnimal(a) {
   return [a.id, a.species, a.boss || 0, R(a.x), R(a.y), A(a.angle), Math.ceil(a.hp), a.maxHp, a.stage, a.sleep ? 1 : 0, a.owner || 0, a.moving ? 1 : 0, T(a.attackAt), T(a.hitAt), a.r, a.bonus || 0, a.mode || 0, T(a.skillAt ?? -99), a.angry ? 1 : 0, R(a.xp || 0), a.level || 1];
@@ -1142,15 +1330,17 @@ export function snapshot(world, selfId) {
   const me = world.players[selfId];
   const c = me || { x: CENTER.x, y: CENTER.y };
   return {
-    t: 'snap', time: T(world.time),
-    me: me ? { xp: Math.floor(me.xp), res: { wood: me.res.wood, stone: me.res.stone, food: me.res.food, gold: me.res.gold }, items: me.items, sel: me.sel, choices: me.choices, hats: me.hats, pets: me.pets, kills: me.kills, tames: me.tames, cd: T(me.cd), fx: [me.poison > 0, me.burn > 0, me.slowUntil > world.time, me.armorUntil > world.time, me.hasteUntil > world.time], lastHitBy: me.lastHitBy,
+    t: 'snap', time: T(world.time), biome: world.biome,
+    r: world.resources.filter(n => n.hp !== RESOURCE_TYPES[n.type].hp || n.respawnAt).map(n => [n.id, n.hp ?? null, Number.isFinite(n.respawnAt) ? T(n.respawnAt) : -1]),
+    chests: world.resources.filter(n => n.type === 'chest' && !n.respawnAt).map(n => [n.id, n.x, n.y, n.r, n.hp]),
+    me: me ? { xp: Math.floor(me.xp), res: { wood: me.res.wood, stone: me.res.stone, food: me.res.food, gold: me.res.gold }, items: me.items, sel: me.sel, choices: me.choices, hats: me.hats, accessories: me.accessories, pets: me.pets, kills: me.kills, tames: me.tames, cd: T(me.cd), fx: [me.poison > 0, me.burn > 0, me.slowUntil > world.time, me.armorUntil > world.time, me.hasteUntil > world.time, me.blindUntil > world.time], lastHitBy: me.lastHitBy,
       // for prediction: the last input applied, the velocity after it, and the current top speed
       seq: me.seq || 0, v: [A(me.vx), A(me.vy)], spd: A(moveSpeed(world, me, item(me.items[me.sel]) || item('hand'))) } : null,
     p: Object.values(world.players).filter(p => p.id === selfId || inView(p, c, 200)).map(encodePlayer),
     a: world.animals.filter(a => !a.dead && (a.owner === selfId || inView(a, c, a.r + 100))).map(encodeAnimal),
     s: world.structures.filter(s => inView(s, c, 120)).map(encodeStructure),
     j: world.projectiles.filter(j => inView(j, c, 200)).map(encodeProjectile),
-    h: world.hazards.map(h => [h.id, R(h.x), R(h.y), h.r, T(h.at)]),
+    h: world.hazards.map(h => [h.id, R(h.x), R(h.y), h.r, T(h.at), h.kind, T(h.until || 0), h.owner || null]),
     boss: world.animals.filter(a => a.boss && !a.dead).map(a => [R(a.x), R(a.y), Math.round(a.hp / a.maxHp * 100) / 100, a.boss, a.sleep ? 1 : 0]),
   };
 }

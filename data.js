@@ -6,10 +6,7 @@
 export const WORLD = { w: 9600, h: 9600 };
 export const CENTER = { x: WORLD.w / 2, y: WORLD.h / 2 };
 
-// ---------------- biomes (fixed regions of the map) ----------------
-// The map is a 3x3 grid of square regions with hard edges: forest in the
-// middle, where everyone spawns, and the harsher biomes around it. Each
-// biome has its own resources, wild animals and a sleeping boss.
+// ---------------- cycling world biomes ----------------
 export const BIOMES = [
   {
     id: 'forest', name: 'Forest', ground: '#62813b', decor: '#56732f', pebble: '#7a9a4a', tuft: 'grass',
@@ -49,21 +46,21 @@ export const BIOMES = [
   },
 ];
 export const BIOME_BY_ID = Object.fromEntries(BIOMES.map(b => [b.id, b]));
-// Rows of the 3x3 map, north to south.
-export const BIOME_GRID = [
-  ['winter', 'winter', 'darkness'],
-  ['ocean', 'forest', 'darkness'],
-  ['desert', 'desert', 'volcano'],
-];
+// Retained as a sampling grid for deterministic resource placement, not biome regions.
 export const BIOME_CELL = WORLD.w / 3;
-const cellOf = v => Math.max(0, Math.min(2, Math.floor(v / BIOME_CELL)));
-export function biomeAt(x, y) { return BIOME_BY_ID[BIOME_GRID[cellOf(y)][cellOf(x)]]; }
-/** The squares { x, y, w, h } that make up a biome. */
-export function biomeCells(id) {
-  const out = [];
-  BIOME_GRID.forEach((row, j) => row.forEach((b, i) => { if (b === id) out.push({ x: i * BIOME_CELL, y: j * BIOME_CELL, w: BIOME_CELL, h: BIOME_CELL }); }));
-  return out;
+export const BIOME_GRID = Array.from({ length: 3 }, () => Array(3).fill('forest'));
+export const BIOME_DURATIONS = [900, 480, 480, 480, 480, 480];
+export function biomeState(time = 0) {
+  const cycle = BIOME_DURATIONS.reduce((a, b) => a + b, 0);
+  let elapsed = ((time % cycle) + cycle) % cycle, offset = time - elapsed;
+  for (let index = 0; index < BIOMES.length; index++) {
+    const duration = BIOME_DURATIONS[index];
+    if (elapsed < duration) return { biome: BIOMES[index], index, endsAt: offset + duration };
+    elapsed -= duration; offset += duration;
+  }
 }
+export function biomeAt(x, y, time = 0) { return biomeState(time).biome; }
+export function biomeCells() { return [{ x: 0, y: 0, w: WORLD.w, h: WORLD.h }]; }
 
 // Resource node kinds. `yields` maps gather to a resource; `per` multiplies
 // the weapon's harvest for that node; `hurts` is contact damage per tick.
@@ -71,12 +68,14 @@ export function biomeCells(id) {
 // rocks about two (often a big and a small one together), bushes a little
 // over one.
 export const RESOURCE_TYPES = {
-  tree: { yields: 'wood', r: [105, 128] },
-  rock: { yields: 'stone', r: [52, 74] },
-  bush: { yields: 'food', r: [40, 50] },
+  tree: { yields: 'wood', r: [105, 128], hp: 1200, respawn: 60 },
+  rock: { yields: 'stone', r: [52, 74], hp: 1200, respawn: 90 },
+  bush: { yields: 'food', r: [40, 50], hp: 100, respawn: 40 },
   gold: { yields: 'gold', r: [56, 66] },
-  log: { yields: 'wood', r: [40, 46], per: 4 },
-  cactus: { yields: 'food', r: [32, 38], hurts: 2 },
+  log: { yields: 'wood', r: [40, 46], per: 4, hp: 120, respawn: 50 },
+  cactus: { yields: 'food', r: [32, 38], hurts: 2, hp: 100, respawn: 40 },
+  insect: { yields: 'gold', r: [12, 12], hp: 1, respawn: 45, solid: false, catchOnly: true },
+  chest: { yields: 'gold', r: [35, 35], per: 15, hp: 60, respawn: 0 },
   'big-gold': { yields: 'gold', r: [110, 110], per: 3.5 },
 };
 // Nodes per biome square: a few trees, rocks and bushes on every screen.
@@ -91,9 +90,12 @@ export const TIERS = {
   ruby: { name: 'Ruby', color: '#e2405a', light: '#ff8ea0' },
   amethyst: { name: 'Amethyst', color: '#a35ce0', light: '#d3a6ff' },
   sapphire: { name: 'Sapphire', color: '#3c7be8', light: '#93bcff' },
+  amber: { name: 'Amber', color: '#d68c27', light: '#f1bd62' },
+  diamond: { name: 'Diamond', color: '#9ccbd2', light: '#d4eff4' },
+  emerald: { name: 'Emerald', color: '#398c53', light: '#91cba0' },
 };
 export const TIER_ORDER = ['wood', 'stone', 'gold', 'ruby', 'amethyst', 'sapphire'];
-export const tierRank = t => TIER_ORDER.indexOf(t);
+export const tierRank = t => ['amber','diamond','emerald'].includes(t) ? TIER_ORDER.indexOf('sapphire') : TIER_ORDER.indexOf(t);
 
 // harvest: per-hit yields by resource. dmg: vs players; adm: vs animals; bdm: vs buildings.
 // reload in seconds; range is reach beyond the body edge; speed is % move speed while held.
@@ -110,11 +112,12 @@ const FAMILY = {
   axe: { name: 'Axe', shape: 'axe', base: [25, 45, 15, .8, 65, 80, H(4, 1, 1, 1)], step: [4, 6, 5, .04, 0, -2], hstep: H(4, 1, 1, 1) },
   hammer: { name: 'Hammer', shape: 'hammer', base: [10, 14, 20, .5, 60, 90, H(3, 4, 3, 4)], step: [2, 3, 8, 0, 0, 0], hstep: H(1, 2, 1, 2) },
   daggers: { name: 'Daggers', shape: 'dagger', base: [10, 13, 4, .3, 55, 95, H(1, 1, 1, 1)], step: [2, 3, 1, 0, 0, 0] },
+  gloves: { name: 'Gloves', shape: 'fist', base: [14, 14, 7, .6, 30, 95, H(1, 1, 1, 1)], step: [4, 4, 4, 0, 0, -1.75] },
   spear: { name: 'Spear', shape: 'spear', base: [20, 30, 6, .9, 100, 85, H(1, 1, 1, 1)], step: [3, 4, 2, 0, 5, 0] },
 };
 const VARIANT = {
   sword: { id: 'katana', name: 'Katana', shape: 'katana', mod: { reload: -.12, dmg: -2, range: 10 } },
-  axe: { id: 'labrys', name: 'Labrys', shape: 'labrys', mod: { dmg: 4, reload: .1, spin: true } },
+  axe: { id: 'labrys', name: 'Labrys', shape: 'labrys', mod: { dmg: 4, adm: -8, reload: .45, spin: true } },
   hammer: { id: 'pickaxe', name: 'Pickaxe', shape: 'pickaxe', mod: { dmg: -2, harvest: H(1, 8, 1, 7) } },
   daggers: { id: 'cleavers', name: 'Cleavers', shape: 'cleaver', mod: { reload: .1, adm: 4, harvest: H(1, 1, 3, 1) } },
   spear: { id: 'naginata', name: 'Naginata', shape: 'naginata', mod: { range: 60, reload: .15, dmg: 2 } },
@@ -127,7 +130,7 @@ for (const [fam, f] of Object.entries(FAMILY)) {
     const name = k === 0 ? (fam === 'sword' ? 'Stone Sword' : fam === 'daggers' ? 'Daggers' : `Stone ${f.name}`) : `${TIERS[tier].name} ${f.name}`;
     PRIMARY.push(weapon(`${tier}-${fam}`, name, fam, f.shape, tier, dmg + f.step[0] * k, adm + f.step[1] * k, bdm + f.step[2] * k,
       +(reload + f.step[3] * k).toFixed(2), range + f.step[4] * k, speed + f.step[5] * k, hv));
-    if (k >= 1) {
+    if (k >= 1 && VARIANT[fam]) {
       const v = VARIANT[fam], m = v.mod;
       const base = PRIMARY[PRIMARY.length - 1];
       PRIMARY.push({
@@ -140,6 +143,15 @@ for (const [fam, f] of Object.entries(FAMILY)) {
   });
 }
 
+const PRIMARY_SPEEDS = {
+  sword: [85, 83, 80, 78, 75], katana: [85, 80, 75, 70, 65],
+  axe: [80, 78, 76, 75, 70], labrys: [80, 77, 76, 74, 70],
+  hammer: [95, 94, 93, 92, 90], pickaxe: [95, 80, 78, 76, 75],
+  daggers: [90, 89, 88, 86, 85], cleavers: [90, 86, 84, 82, 81],
+  spear: [84, 83, 81, 79, 74], naginata: [84, 78, 75, 70, 68], gloves: [95, 93, 91, 89, 88],
+};
+for (const it of PRIMARY) if (it.id !== 'hand') it.speed = PRIMARY_SPEEDS[it.variant ? VARIANT[it.family].id : it.family][WEAPON_TIERS.indexOf(it.tier)];
+
 const SECONDARY = [];
 ['stone', 'gold', 'ruby', 'amethyst', 'sapphire'].forEach((tier, k) => {
   SECONDARY.push({ id: `${tier}-bow`, name: `${TIERS[tier].name} Bow`, slot: 'secondary', family: 'bow', shape: 'bow', tier, dmg: 15 + 3 * k + (k > 2 ? 2 : 0), adm: 22 + 5 * k, bdm: 2 + k, reload: k >= 3 ? 1.2 : 1.3, range: 700, speed: 75, ammo: { wood: 5 + k }, projectile: 1100 });
@@ -147,9 +159,17 @@ const SECONDARY = [];
   SECONDARY.push({ id: `${tier}-wrench`, name: `${TIERS[tier].name} Wrench`, slot: 'secondary', family: 'wrench', shape: 'wrench', tier, dmg: 8 + k, adm: 10 + k, bdm: 0, reload: .6, range: 60, speed: 90, repair: 30 + 15 * k });
   if (k >= 1) SECONDARY.push({ id: `${tier}-crossbow`, name: `${TIERS[tier].name} Crossbow`, slot: 'secondary', family: 'bow', shape: 'crossbow', tier, dmg: 20 + 3 * k, adm: 30 + 5 * k, bdm: 3 + k, reload: 1.55 - .05 * k, range: 900, speed: 62, ammo: { wood: 10 + 2 * k }, projectile: 1500 });
 });
+for (const [k, tier] of WEAPON_TIERS.entries()) if (k > 0) {
+  for (const [id, dmg, reload, speed, ammo] of [['musket', 18+4*k, 1-.05*k, 80-2*k, {stone:8}], ['minigun', 5+2*k, .15, 65-2*k, {stone:2}]]) SECONDARY.push({id:`${tier}-${id}`,name:`${TIERS[tier].name} ${id === 'musket' ? 'Musket' : 'Minigun'}`,slot:'secondary',family:'bow',shape:'crossbow',variantId:id,tier,dmg,adm:dmg*.8,bdm:3,range:850,speed,reload,ammo,projectile:1600,spread:id==='minigun'?.14:0});
+  for (const [id, block, skillBlock, touch] of [['crystal-shield',.3,.7,0],['spike-shield',.3,0,2]]) SECONDARY.push({id:`${tier}-${id}`,name:`${TIERS[tier].name} ${id==='crystal-shield'?'Crystal Shield':'Spike Shield'}`,slot:'secondary',family:'shield',shape:'shield',variantId:id,tier,dmg:8+k,adm:10+k,bdm:3,reload:.6,range:35,speed:70,block,skillBlock,touch});
+}
 for (const s of SECONDARY) if (s.tier === 'stone') s.name = s.name.replace('Stone ', s.family === 'bow' ? 'Stone ' : '');
 
 const TOOLS = [
+  { id: 'bug-net', name: 'Bug Net', slot: 'tool', shape: 'net', tier: 'wood', reload: .8, range: 100, speed: 100, catch: true },
+  { id: 'gold-bug-net', name: 'Golden Bug Net', slot: 'tool', shape: 'net', tier: 'gold', reload: .8, range: 145, speed: 95, catch: true },
+  { id: 'saddle', name: 'Saddle', slot: 'tool', shape: 'saddle', tier: 'wood', reload: .5, range: 160, speed: 95, mount: true },
+  ...['racing','battle','crystal','honey','turtle'].map(kind=>({id:`${kind}-saddle`,name:`${kind[0].toUpperCase()+kind.slice(1)} Saddle`,slot:'tool',shape:'saddle',tier:'gold',reload:.5,range:160,speed:90,mount:true,mountBuff:kind})),
   { id: 'appletor', name: 'Appletor', slot: 'tool', shape: 'appletor', tier: 'wood', reload: .7, range: 600, speed: 65, ammo: { food: 5 }, healPlayer: 10, healPet: 20, tameTool: 'appletor', projectile: 900 },
   { id: 'slingshot', name: 'Slingshot', slot: 'tool', shape: 'slingshot', tier: 'wood', reload: .7, range: 600, speed: 65, ammo: { stone: 5 }, dmg: 10, adm: 15, tameTool: 'slingshot', projectile: 1000 },
   { id: 'gold-appletor', name: 'Golden Appletor', slot: 'tool', shape: 'appletor', tier: 'gold', reload: .8, range: 650, speed: 55, ammo: { food: 10 }, healPlayer: 20, healPet: 40, tameTool: 'appletor', safer: true, projectile: 950 },
@@ -198,19 +218,27 @@ BUILDINGS.push(
   build('big-heal-pad', 'Big Heal Pad', 'heal', 'gold', { wood: 80, stone: 80, gold: 400 }, 700, 2, { r: 56, heal: 15, every: .6 }),
 );
 
-export const ITEMS = [...PRIMARY, ...SECONDARY, ...TOOLS, ...FOODS, ...BUILDINGS];
+for (const [k,tier] of ['ruby','amethyst','sapphire'].entries()) {
+  const base=BUILDINGS.find(b=>b.id==='gold-turret'); BUILDINGS.push({...base,id:`${tier}-turret`,name:`${TIERS[tier].name} Turret`,tier,hp:240+k*60,dmg:18+k*3,cost:{wood:90,stone:50,gold:180+k*50}});
+}
+for (const [k,tier] of ['stone','gold','ruby','amethyst','sapphire'].entries()) {
+  const base=BUILDINGS.find(b=>b.id==='fire-tower'); BUILDINGS.push({...base,id:`${tier}-tower`,name:`${TIERS[tier].name} Fire Tower`,tier,hp:300+k*80,dmg:22+k*4,cost:{wood:80,stone:30,gold:50+k*40}});
+}
+const COSMETICS = [...PRIMARY, ...SECONDARY, ...BUILDINGS].filter(it => it.tier === 'sapphire').flatMap(it => ['amber', 'diamond', 'emerald'].map(tier => ({ ...it, id: it.id.replace('sapphire-', `${tier}-`), tier, name: it.name.replace('Sapphire', TIERS[tier].name) })));
+export const ITEMS = [...PRIMARY, ...SECONDARY, ...TOOLS, ...FOODS, ...BUILDINGS, ...COSMETICS];
 export const ITEM_BY_ID = new Map(ITEMS.map(item => [item.id, item]));
-export const STARTING_ITEMS = ['hand', 'apple', 'wood-wall', 'wood-door', 'wood-spike', 'wood-windmill'];
+export const STARTING_ITEMS = ['hand', 'apple', 'wood-wall', 'wood-spike', 'wood-windmill', 'wood-door'];
 export const START_RESOURCES = { food: 60, wood: 60, stone: 60, gold: 0 };
 /** Food spent on every taming try, win or lose. */
 export const TAME_FOOD = 12;
-export const SLOT_ORDER = ['primary', 'secondary', 'tool', 'food', 'wall', 'door', 'spike', 'windmill', 'turret', 'tower', 'boost', 'trap', 'heal'];
+export const SLOT_ORDER = ['primary', 'secondary', 'tool', 'food', 'wall', 'spike', 'windmill', 'door', 'turret', 'tower', 'boost', 'trap', 'heal'];
 export const BUILD_LIMIT = 105;
 
 // ---------------- leveling ----------------
 
-/** Xp to leave `age`. The first age comes in seconds; after that each age costs a little more, so with kills it stays around half a minute. */
-export const xpForAge = age => age === 0 ? 20 : 60 + 16 * age;
+/** Each age costs 40 more XP than the last; total XP at age a is 20*a*(a+1). */
+export const xpForAge = age => 40 * (age + 1);
+export const totalXp = (age, xp = 0) => 20 * age * (age + 1) + xp;
 export const MAX_AGE = 100;
 export const LAST_CHOICE_AGE = 27;
 
@@ -225,48 +253,57 @@ function nextTier(items, slot) {
 function primaryAtTier(items, tier) {
   const cur = slotItem(items, 'primary');
   if (!cur || cur.family === 'hand') return [`${tier}-sword`];
+  if (tier !== 'gold') return [`${tier}-${cur.variant ? VARIANT[cur.family].id : cur.family}`];
   const out = [`${tier}-${cur.family}`];
   const v = VARIANT[cur.family];
-  if (ITEM_BY_ID.has(`${tier}-${v.id}`)) out.push(`${tier}-${v.id}`);
+  if (v && ITEM_BY_ID.has(`${tier}-${v.id}`)) out.push(`${tier}-${v.id}`);
   if (cur.variant) out.reverse();
   return out;
 }
 function secondaryAtTier(items, tier) {
   const cur = slotItem(items, 'secondary');
   if (!cur) return [`${tier}-bow`, `${tier}-shield`, `${tier}-wrench`].filter(id => ITEM_BY_ID.has(id));
-  const out = [`${tier}-${cur.shape === 'crossbow' ? 'crossbow' : cur.family}`];
-  if (cur.family === 'bow') out.push(cur.shape === 'crossbow' ? `${tier}-bow` : `${tier}-crossbow`);
-  return out.filter(id => ITEM_BY_ID.has(id));
+  // The branch is selected at gold and stays selected at later ages.
+  const branches = tier === 'gold' ? cur.family === 'bow' ? ['bow','crossbow','musket','minigun'] : cur.family === 'shield' ? ['shield','crystal-shield','spike-shield'] : ['wrench'] : [cur.variantId || cur.shape];
+  return branches.map(branch => `${tier}-${branch}`).filter(id => ITEM_BY_ID.has(id));
 }
+const cosmetics = (items, slot) => { const cur = slotItem(items, slot); return cur?.tier === 'sapphire' ? ['amber','diamond','emerald'].map(t => cur.id.replace('sapphire-', `${t}-`)) : []; };
 function buildingTier(items) {
-  return ['wall', 'spike', 'windmill', 'door'].map(slot => nextTier(items, slot)).filter(Boolean).slice(0, 4);
+  const selected = items.map(id => ITEM_BY_ID.get(id)).filter(it => ['spike','windmill','door','turret','tower'].includes(it.kind) && (it.tier !== 'wood' || ['tower','turret'].includes(it.kind))).sort((a,b)=>tierRank(b.tier)-tierRank(a.tier))[0];
+  if (!selected) return [];
+  if (selected.tier === 'sapphire') return cosmetics(items, selected.slot);
+  const next = nextTier(items, selected.slot);
+  return next ? [next] : [];
 }
+const wallOrFood = (items, foods) => slotItem(items,'wall')?.tier !== 'wood' ? [nextTier(items,'wall')].filter(Boolean) : foods;
 
 // Upgrade offered at each age, modelled on the documented upgrade tree.
 export const AGE_TREE = {
-  1: () => ['stone-sword', 'stone-axe', 'stone-hammer', 'stone-daggers', 'stone-spear'],
+  1: () => ['stone-sword', 'stone-axe', 'stone-hammer', 'stone-daggers', 'stone-spear', 'stone-gloves'],
   2: () => ['cookie', 'stone-wall'],
   3: () => ['stone-windmill', 'stone-spike', 'big-spike', 'wood-turret', 'fire-tower', 'stone-door'],
   4: items => secondaryAtTier(items, 'stone'),
-  5: () => ['appletor', 'slingshot'],
+  5: () => ['appletor', 'slingshot', 'bug-net', 'saddle'],
   6: items => primaryAtTier(items, 'gold'),
-  7: () => ['waffle', 'sandwich', 'steak', 'toffee'],
+  7: items => wallOrFood(items, ['waffle', 'sandwich', 'steak', 'toffee']),
   8: () => ['boost-pad', 'bear-trap', 'heal-pad'],
   9: items => buildingTier(items),
-  10: items => [...secondaryAtTier(items, 'gold'), 'stone-turret'],
+  10: items => secondaryAtTier(items, 'gold'),
   11: items => primaryAtTier(items, 'ruby'),
-  12: items => ['cake', nextTier(items, 'wall')].filter(Boolean),
+  12: items => wallOrFood(items, ['cake']),
   13: items => buildingTier(items),
   14: items => secondaryAtTier(items, 'ruby'),
   15: items => primaryAtTier(items, 'amethyst'),
-  16: items => ['soup', 'meatballs', 'roll', nextTier(items, 'wall')].filter(Boolean),
+  16: items => wallOrFood(items, ['soup', 'meatballs', 'roll']),
   17: items => buildingTier(items),
-  18: items => [...secondaryAtTier(items, 'amethyst'), 'gold-turret'],
+  18: items => secondaryAtTier(items, 'amethyst'),
   19: items => primaryAtTier(items, 'sapphire'),
-  20: items => buildingTier(items),
+  20: items => [...buildingTier(items), ...wallOrFood(items, [])],
   21: items => secondaryAtTier(items, 'sapphire'),
+  22: items => cosmetics(items, 'primary'),
   23: items => buildingTier(items),
-  25: items => [slotItem(items, 'tool')?.id === 'slingshot' ? 'gold-slingshot' : 'gold-appletor', slotItem(items, 'tool')?.id === 'slingshot' ? 'gold-appletor' : 'gold-slingshot'],
+  24: items => cosmetics(items, 'secondary'),
+  25: items => slotItem(items,'tool')?.mount ? ['racing','battle','crystal','honey','turtle'].map(kind=>`${kind}-saddle`) : [slotItem(items,'tool')?.catch ? 'gold-bug-net' : slotItem(items,'tool')?.id === 'slingshot' ? 'gold-slingshot' : 'gold-appletor'],
   26: items => [slotItem(items, 'boost')?.id ? 'big-boost-pad' : null, slotItem(items, 'heal')?.id ? 'big-heal-pad' : null, slotItem(items, 'trap') ? 'big-spike' : null].filter(Boolean),
   27: items => buildingTier(items),
 };
@@ -296,16 +333,17 @@ export function typeMultiplier(attacker, defender) {
   if (!attacker || !defender) return 1;
   let m = 1;
   for (const d of defender) {
-    if (TYPES[attacker].strong.includes(d)) m *= 3;
-    else if (TYPES[attacker].weak.includes(d)) m *= .375;
+    if (TYPES[attacker].strong.includes(d)) m *= 2;
+    else if (TYPES[attacker].weak.includes(d)) m *= .5;
   }
-  return Math.max(.25, Math.min(3, m));
+  return Math.max(.25, Math.min(4, m));
 }
 
 // Skills: one per pet, cast with the skill key. Cooldown shortens as the pet grows.
 export const SKILLS = {
+  hindrance: { name: 'Burning Hindrance', cd: 21, desc: 'Fiery curse blocks solid buildings and pet skills.' },
   blaze: { name: 'Blaze', cd: 30, desc: 'Burst of flame that burns nearby enemies.' },
-  vines: { name: 'Draining Vines', cd: 28, desc: 'Roots the target, draining health back to the pet.' },
+  vines: { name: 'Draining Vines', cd: 20, desc: 'Roots the target, draining health back to the pet.' },
   wave: { name: 'Tidal Wave', cd: 28, desc: 'A wave that pushes enemies away.' },
   thunder: { name: 'Thunder', cd: 30, desc: 'Lightning strike; may paralyse.' },
   frost: { name: 'Frost Wall', cd: 30, desc: 'Icy ring that may freeze enemies.' },
@@ -329,7 +367,7 @@ export const PETS = [
   pet('bear', 'Bear', 'forest', 'bear', '#7b5232', '#c99a6b', ['water'], 'common', 66, 'slingshot', 'neutral', [300, 600, 1500], [4, 8, 19], [200, 240, 250], 'wave'),
   pet('fox', 'Fox', 'forest', 'fox', '#e8813a', '#fff1dc', ['electric'], 'rare', 14, 'appletor', 'coward', [200, 400, 1000], [4, 8, 19], [240, 280, 310], 'thunder'),
   pet('boar', 'Boar', 'forest', 'boar', '#8a5e3c', '#3e2a1c', ['poison'], 'rare', 10, 'slingshot', 'neutral', [300, 600, 1250], [4, 12, 24], [240, 270, 310], 'venom'),
-  pet('hedgehog', 'Hedgehog', 'forest', 'hedgehog', '#a77b55', '#5b3d26', ['fire'], 'rare', 12, 'appletor', 'neutral', [300, 700, 1200], [4, 10, 22], [210, 260, 290], 'blaze'),
+  pet('hedgehog', 'Hedgehog', 'forest', 'hedgehog', '#a77b55', '#5b3d26', ['fire'], 'rare', 12, 'appletor', 'neutral', [300, 700, 1200], [4, 10, 22], [210, 260, 290], 'hindrance'),
   pet('deer', 'Deer', 'forest', 'deer', '#c08a55', '#efe2c2', ['plant'], 'rare', 12, 'appletor', 'coward', [250, 500, 1100], [4, 9, 20], [260, 300, 340], 'rally', { pattern: 'spots' }),
   pet('owl', 'Owl', 'forest', 'bird', '#a07d52', '#e5cf9e', ['normal'], 'epic', 8, 'slingshot', 'neutral', [180, 360, 900], [5, 11, 26], [260, 300, 360], 'scratch'),
   // winter
@@ -362,6 +400,31 @@ export const PETS = [
   pet('ember-fox', 'Ember Fox', 'volcano', 'fox', '#c73b1e', '#ffd23f', ['fire', 'electric'], 'epic', 8, 'appletor', 'coward', [200, 420, 1000], [5, 10, 24], [260, 300, 340], 'thunder'),
   pet('phoenix', 'Phoenix', 'volcano', 'bird', '#ff7a1f', '#ffd23f', ['fire'], 'legendary', 4, 'appletor', 'neutral', [220, 480, 1200], [7, 15, 32], [280, 320, 380], 'blaze', { pattern: 'flame' }),
 ];
+for (const [id, name, biome, body, types, skill] of [
+  ['grove-spirit', 'Grove Spirit', 'forest', 'deer', ['plant'], 'vines'],
+  ['ice-spirit', 'Ice Spirit', 'winter', 'fox', ['ice'], 'frost'],
+  ['dune-spirit', 'Dune Spirit', 'desert', 'serpent', ['rock'], 'boulder'],
+]) PETS.push(pet(id, name, biome, body, '#c4b688', '#f0d390', types, 'legendary', 4, 'appletor', 'neutral', [200, 450, 1200], [5, 12, 28], [200, 240, 280], skill));
+// Verified wiki stats for matching animals, without chase/follow speed multipliers.
+const ANIMAL_STATS = {
+  boar: [[200,450,1100],[4,10,22],[240,270,310]],
+  owl: [[300,600,1400],[3,10,18],[200,250,280]],
+  bat: [[150,300,700],[4,10,15],[250,270,330]],
+  'black-cat': [[200,350,800],[4,9,20],[260,300,340]],
+  camel: [[200,500,1000],[4,10,20],[250,280,320]],
+  caracal: [[200,400,900],[4,10,22],[210,260,290]],
+  'polar-bear': [[300,500,1250],[5,9,22],[210,250,260]],
+  'arctic-fox': [[200,400,900],[5,10,24],[240,280,310]],
+  raven: [[200,300,900],[4,12,20],[220,270,300]],
+  reindeer: [[300,800,1400],[4,10,22],[290,310,390]],
+  salamander: [[200,400,900],[3,9,15],[240,280,340]],
+  crab: [[300,700,2000],[4,10,22],[200,220,240]],
+  seal: [[400,1000,2000],[3,7,14],[210,250,290]],
+  shark: [[300,600,1400],[6,12,30],[220,260,300]],
+  scorpion: [[300,700,1400],[7,14,28],[220,240,270]],
+  spider: [[200,400,800],[7,15,22],[240,260,320]],
+};
+for (const def of PETS) if (ANIMAL_STATS[def.id]) [def.hp, def.bite, def.speed] = ANIMAL_STATS[def.id];
 export const PET_BY_ID = new Map(PETS.map(p => [p.id, p]));
 export const RARITY = {
   common: { color: '#a3adb8', label: 'Common' },
@@ -376,25 +439,44 @@ export const MAX_PETS = 3;
 // Stationary bosses, one per biome. They sleep until someone attacks them;
 // a kill pays everyone who helped and drops three sleeping babies from that biome.
 export const BOSSES = [
-  { id: 'old-oak', name: 'Old Oak', biome: 'forest', body: 'treant', color: '#6b4a2b', accent: '#97cf3a', hp: 8000, dmg: 60, reach: 230, every: 1.6, gold: 5000, xp: 4000, minions: 'wolf' },
+  { id: 'old-oak', name: 'Old Oak', biome: 'forest', body: 'treant', color: '#6b4a2b', accent: '#97cf3a', hp: 8000, dmg: 60, reach: 230, every: 1.6, gold: 5000, xp: 4500, minions: 'wolf' },
   { id: 'frost-golem', name: 'Frost Golem', biome: 'winter', body: 'golem', color: '#9fe3f5', accent: '#e9fbff', hp: 9000, dmg: 55, reach: 220, every: 1.8, gold: 5000, xp: 4500, minions: 'arctic-fox' },
   { id: 'shade-cap', name: 'Shade Cap', biome: 'darkness', body: 'mushroom', color: '#7a5fd0', accent: '#7dfcd2', hp: 8000, dmg: 50, reach: 220, every: 1.4, gold: 5000, xp: 4000, minions: 'spider' },
   { id: 'sand-colossus', name: 'Sand Colossus', biome: 'desert', body: 'golem', color: '#c69a5c', accent: '#f0d090', hp: 9500, dmg: 60, reach: 230, every: 1.8, gold: 5500, xp: 4500, minions: 'scorpion' },
-  { id: 'deep-kraken', name: 'Deep Kraken', biome: 'ocean', body: 'kraken', color: '#b0477a', accent: '#ff9ac9', hp: 9000, dmg: 55, reach: 260, every: 1.6, gold: 5500, xp: 4500, minions: 'crab' },
+  { id: 'deep-kraken', name: 'Deep Kraken', biome: 'ocean', body: 'kraken', color: '#b0477a', accent: '#ff9ac9', hp: 9000, dmg: 55, reach: 260, every: 1.6, gold: 5500, xp: 4800, minions: 'crab' },
   { id: 'magma-titan', name: 'Magma Titan', biome: 'volcano', body: 'golem', color: '#5c3b33', accent: '#ff7b2e', hp: 10000, dmg: 65, reach: 230, every: 1.8, gold: 6000, xp: 5000, minions: 'salamander' },
 ];
+const BOSS_TYPES = { forest: ['plant'], winter: ['ice'], darkness: ['shadow', 'poison'], desert: ['rock'], ocean: ['water'], volcano: ['fire', 'rock'] };
+for (const b of BOSSES) { b.types = BOSS_TYPES[b.biome]; b.cycle = { forest: ['roots', 'slam'], winter: ['ring', 'freeze', 'slam'], darkness: ['poison', 'ring', 'roots'], desert: ['slam', 'ring', 'rocks'], ocean: ['poison', 'whirlpool'], volcano: ['rocks', 'ring', 'slam'] }[b.biome]; }
 export const BOSS_BY_ID = new Map(BOSSES.map(b => [b.id, b]));
 
 // Cosmetic + light-effect hats bought with gold. Lost on leaving the server.
 export const HATS = [
   { id: 'none', name: 'No hat', cost: 0, note: '' },
-  { id: 'leaf', name: 'Leaf Cap', cost: 200, note: '+1 wood per hit' },
-  { id: 'miner', name: 'Miner Helmet', cost: 2000, note: '+2 stone and gold per hit', gather: { stone: 2, gold: 2 } },
+  { id: 'leaf', name: 'Wood Hat', cost: 2000, note: '+2 wood per hit', gather: { wood: 2 } },
+  { id: 'miner', name: 'Miner Hat', cost: 2000, note: '+2 stone per hit', gather: { stone: 2 } },
   { id: 'tamer', name: 'Tamer Cap', cost: 2500, note: 'Tame chance x1.29', tame: 1.29 },
-  { id: 'beanie', name: 'Snow Beanie', cost: 1200, note: '+15% speed in Winter', biome: 'winter' },
+  { id: 'beanie', name: 'Winter Cap', cost: 3000, note: '+15% speed and 10% defence in Winter', biome: 'winter', biomeArmor: .1 },
   { id: 'flower', name: 'Flower Crown', cost: 3000, note: 'Pets regenerate twice as fast' },
   { id: 'horns', name: 'Warrior Horns', cost: 6000, note: '+10% damage' },
-  { id: 'knight', name: 'Knight Helmet', cost: 10000, note: '-40% damage taken, -15% speed', armor: .4, slow: .15 },
-  { id: 'crown', name: 'Golden Crown', cost: 20000, note: 'Pure prestige' },
+  { id: 'knight', name: 'Knight Helmet', cost: 10000, note: '-40% damage taken, -30% speed', armor: .4, slow: .30 },
+  { id: 'crown', name: 'King Crown', cost: 20000, note: '+50% XP earned by pets', petXp: 1.5 },
 ];
+HATS.push(
+  { id: 'bush', name: 'Bush Hat', cost: 7000, note: '+1 food per hit', gather: { food: 1 } },
+  { id: 'lucky', name: 'Lucky Hat', cost: 10000, note: 'Taming tools fail half as often', luck: .5 },
+  { id: 'trophy', name: 'Wolf Trophy Hat', cost: 15000, note: '+50% XP from animal kills', killXp: 1.5 },
+  { id: 'swift', name: 'Swift Cap', cost: 20000, note: '+10% movement speed', move: 1.1 },
+  ...['forest','darkness','desert','ocean','volcano'].map(biome => ({ id: `season-${biome}`, name: `${BIOME_BY_ID[biome].name} Hat`, cost: 3000, note: `+15% speed and 10% defence in ${BIOME_BY_ID[biome].name}`, biome, biomeArmor: .1 })),
+);
+export const ACCESSORIES = [
+  { id: 'none', name: 'No accessory', cost: 0, note: '' },
+  { id: 'baby-wings', name: 'Baby Wings', cost: 5000, note: '+20% spear and naginata damage', family: 'spear', damage: 1.2 },
+  { id: 'dragon-wings', name: 'Dragon Wings', cost: 10000, note: '+10% sword and katana damage', family: 'sword', damage: 1.1 },
+  { id: 'dark-wings', name: 'Dark Wings', cost: 20000, note: '+10% dagger and cleaver damage', family: 'daggers', damage: 1.1 },
+  { id: 'demon-wings', name: 'Demon Wings', cost: 20000, note: '+20% axe and labrys damage', family: 'axe', damage: 1.2 },
+  { id: 'round-wings', name: 'Final Round Wings', cost: 20000, note: '+20% glove damage', family: 'gloves', damage: 1.2 },
+  { id: 'angel-wings', name: 'Angel Wings', cost: 20000, note: 'Regenerate 1 health each second', regen: 1 },
+];
+export const ACCESSORY_BY_ID = new Map(ACCESSORIES.map(a => [a.id,a]));
 export const HAT_BY_ID = new Map(HATS.map(h => [h.id, h]));

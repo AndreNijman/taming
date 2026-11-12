@@ -80,3 +80,27 @@ async function expedition(room, settings = { max:4, bots:2 }) {
 }
 
 console.log('netlog test passed');
+
+// The relay preserves explicit pet targets and accepts accessory purchases.
+{
+  const S = await import('../sim.js');
+  const room = makeRoom([]);
+  room.started = true;
+  room.world = S.createWorld(123);
+  const p = S.addPlayer(room.world, { id: 'p', name: 'Commands' });
+  const pet = room.world.animals.find(a => !a.boss);
+  pet.owner = p.id; pet.sleep = false; p.pets = [pet.id];
+  const target = room.world.animals.find(a => a.boss);
+  room.players.set(p.id, { id: p.id });
+  const session = { id: p.id, ready: true };
+  await say(room, session, { t: 'cmd', c: { t: 'pets', mode: 'attack', target: target.id } });
+  assert.equal(pet.lockedTarget, target.id, 'target must survive command sanitization');
+  p.res.gold = 20000;
+  await say(room, session, { t: 'cmd', c: { t: 'accessory', id: 'baby-wings' } });
+  assert.equal(p.wings, 'baby-wings');
+  assert.equal(p.res.gold, 15000);
+  await say(room, session, { t: 'cmd', c: { t: 'release', id: pet.id } });
+  assert.equal(pet.owner, null);
+  assert.deepEqual(p.pets, []);
+  console.log('relay mechanics commands passed');
+}

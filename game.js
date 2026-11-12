@@ -2,8 +2,8 @@
 // Solo games run sim.js locally at the fixed sim rate; online games render
 // snapshots from the relay. Both paths draw from the same decoded snapshots.
 import {
-  BIOMES, BIOME_BY_ID, BIOME_GRID, BIOME_CELL, biomeAt, PETS, PET_BY_ID, ITEM_BY_ID, RARITY, PET_STAGE, PET_XP, BOSSES, BOSS_BY_ID,
-  HATS, HAT_BY_ID, SKILLS, TYPES, xpForAge, WORLD, CENTER, ageChoices, TAME_FOOD,
+  BIOMES, BIOME_BY_ID, BIOME_GRID, BIOME_CELL, biomeAt, biomeState, RESOURCE_TYPES, PETS, PET_BY_ID, ITEM_BY_ID, RARITY, PET_STAGE, PET_XP, BOSSES, BOSS_BY_ID,
+  HATS, HAT_BY_ID, ACCESSORIES, SKILLS, TYPES, xpForAge, WORLD, CENTER, ageChoices, TAME_FOOD,
 } from './data.js';
 import * as S from './sim.js';
 import * as R from './render.js';
@@ -136,7 +136,7 @@ function renderGuide() {
   const boss = BOSS_BY_ID.get(biome.boss);
   const card = document.createElement('article'); card.className = 'boss-card';
   const art = document.createElement('img'); art.src = R.bossPortrait(boss.id, 120).toDataURL(); art.alt = '';
-  card.innerHTML = `<span class="rarity" style="--c:#e2413b">Boss</span><h3>${escapeHtml(boss.name)}</h3><p>${boss.hp} HP · sleeps until someone strikes it, then throws rings of thorns and summons ${PET_BY_ID.get(boss.minions).name.toLowerCase()} packs. Worth ${boss.gold} gold, shared by everyone who hurt it, and it leaves three sleeping babies behind.</p>`;
+  card.innerHTML = `<span class="rarity" style="--c:#e2413b">Boss</span><h3>${escapeHtml(boss.name)}</h3><p>${boss.hp} HP · sleeps until someone strikes it, then cycles through its own attacks and summons ${PET_BY_ID.get(boss.minions).name.toLowerCase()} packs. Drops three gold chests and three sleeping legendary babies.</p>`;
   card.prepend(art); grid.append(card);
 }
 $('open-tamodex').onclick = () => { renderGuide(); show('tamodex'); };
@@ -314,17 +314,29 @@ function decodeSnap(s) {
   for (const r of s.a) { const a = S.decodeAnimal(r); animals.set(a.id, a); }
   for (const r of s.j) { const j = S.decodeProjectile(r); projectiles.set(j.id, j); }
   return {
-    time: s.time, me: s.me, players, animals, projectiles,
-    structures: s.s.map(S.decodeStructure), hazards: s.h.map(([id, x, y, r, at]) => ({ id, x, y, r, at })), boss: s.boss || [],
+    time: s.time, biome: s.biome || biomeState(s.time).biome.id, resources: s.r || [], chests: s.chests || [], me: s.me, players, animals, projectiles,
+    structures: s.s.map(S.decodeStructure), hazards: s.h.map(([id, x, y, r, at, kind, until, owner]) => ({ id, x, y, r, at, kind, until, owner })), boss: s.boss || [],
   };
 }
 function pushSnap(snap) {
   game.prev = game.cur || snap; game.cur = snap;
   // the resource layout is a pure function of the world seed
-  if (game.gridSeed !== game.seed) {
-    game.gridSeed = game.seed;
-    game.grid = S.generateResources(game.seed);
+  if (game.gridSeed !== `${game.seed}:${snap.biome}`) {
+    game.gridSeed = `${game.seed}:${snap.biome}`;
+    game.grid = S.generateResources(game.seed, snap.biome);
     game.nodeHits.clear();
+  }
+  // Every snapshot carries current mutations, including for clients who joined after a node broke.
+  for (const n of game.grid.list) { n.hp = RESOURCE_TYPES[n.type].hp; n.respawnAt = 0; }
+  const nodes = new Map(game.grid.list.map(n => [n.id, n]));
+  for (const [id, hp, at] of snap.resources) { const n = nodes.get(id); if (n) { n.hp = hp; n.respawnAt = at === -1 ? Infinity : at; } }
+  // Dynamic boss chests have coordinates, unlike deterministic map nodes.
+  game.grid.list = game.grid.list.filter(n => n.type !== 'chest');
+  for (const [k, list] of game.grid.grid) game.grid.grid.set(k, list.filter(n => n.type !== 'chest'));
+  for (const [id, x, y, r, hp] of snap.chests) {
+    const n = { id, type: 'chest', x, y, r, hp, respawnAt: 0, biome: snap.biome };
+    game.grid.list.push(n); const k = `${Math.floor(x/game.grid.cell)},${Math.floor(y/game.grid.cell)}`;
+    if (!game.grid.grid.has(k)) game.grid.grid.set(k, []); game.grid.grid.get(k).push(n);
   }
 }
 // Online, this player's tamer moves at once by the sim's own movement step (predict.js); the
@@ -407,10 +419,10 @@ function handleEvents(events) {
   for (const e of events) {
     const mine = e.by === game.id || e.to === game.id || e.owner === game.id;
     switch (e.k) {
-      case 'dmg': {
+      case 'season': banner(`${BIOME_BY_ID[e.biome].name} has arrived`); break;
+    case 'dmg': {
         const self = e.id === game.id;
         if (e.by === game.id) game.hits++;
-        if (self) game.shake = Math.max(game.shake, .22);
         const color = self ? '#ff3b30' : e.kind === 'struct' ? '#e8dfcc' : e.kind === 'poison' ? '#c77dff' : e.kind === 'burn' ? '#ffa23a' : e.kind === 'ice' ? '#9be7ff' : '#ff5a4a';
         floater(e.x + (Math.random() - .5) * 20, e.y, String(e.amt), color, self || e.crit ? 26 : 21);
         burst(e.x, e.y + 20, '#ffffff', 3, { size: 4, speed: 120, life: .3, shape: 'spark', grav: 0 });
@@ -444,7 +456,7 @@ function handleEvents(events) {
         break;
       case 'tamefail':
         burst(e.x, e.y, '#6b5b4b', 8, { size: 9, speed: 80 });
-        if (e.by === game.id) { toast(`Missed at ${e.chance}%. The ${petName(e.species)} is still asleep, try again`); game.lastAction = 'tamefail'; }
+        if (e.by === game.id) { toast(`Missed at ${e.chance}%. The ${petName(e.species)} woke up and is attacking`); game.lastAction = 'tamefail'; }
         break;
       case 'grow':
         ring(e.x, e.y, '#7fe05a', 90);
@@ -515,8 +527,8 @@ function screenToWorld(x, y) {
 }
 function updateInput() {
   const k = game.keys, blocked = game.paused || game.dead || game.overlay;
-  let mx = (k.has('d') || k.has('arrowright') ? 1 : 0) - (k.has('a') || k.has('arrowleft') ? 1 : 0);
-  let my = (k.has('s') || k.has('arrowdown') ? 1 : 0) - (k.has('w') || k.has('arrowup') ? 1 : 0);
+  let mx = (keyDown('right') || k.has('arrowright') ? 1 : 0) - (keyDown('left') || k.has('arrowleft') ? 1 : 0);
+  let my = (keyDown('down') || k.has('arrowdown') ? 1 : 0) - (keyDown('up') || k.has('arrowup') ? 1 : 0);
   if (game.touch.mx || game.touch.my) { mx = game.touch.mx; my = game.touch.my; }
   const me = game.view?.me;
   if (me && !game.lock) {
@@ -525,26 +537,56 @@ function updateInput() {
   }
   if (blocked) { mx = my = 0; }
   game.input.mx = mx; game.input.my = my;
-  game.input.attack = !blocked && (game.pointer.down || game.auto || game.touch.attack);
+  const held = ITEM_BY_ID.get(myData()?.items[selIndex()]);
+  game.input.attack = !blocked && (game.pointer.down || keyDown('attack') || game.touch.attack || game.auto && !held?.kind && held?.slot !== 'food');
   game.input.sel = selIndex();
 }
 
-const typing = () => document.activeElement?.tagName === 'INPUT';
+const DEFAULT_KEYS = { up: 'w', down: 's', left: 'a', right: 'd', attack: 'n', tame: ' ', eat: 'q', skill: 'f', pets: 'x', auto: 'e', lock: 'l', map: 'm', shop: 'c', ...Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`slot${i+1}`, i < 9 ? String(i+1) : i === 9 ? '0' : ['-','=','backspace'][i-10]])) };
+let bindings = { ...DEFAULT_KEYS };
+try { const saved = JSON.parse(localStorage.getItem('wildbound-keybinds') || '{}'); for (const [action, key] of Object.entries(saved)) if (action in DEFAULT_KEYS && typeof key === 'string' && key && !['escape','enter'].includes(key)) bindings[action] = key; } catch {}
+let captureBinding = null;
+const keyLabel = key => key === ' ' ? 'Space' : key.length === 1 ? key.toUpperCase() : key;
+function renderKeybinds() {
+  const rows = $('keybinds'); rows.replaceChildren();
+  for (const [action, key] of Object.entries(bindings)) {
+    const row = document.createElement('div'); row.className = 'keybind-row';
+    const label = document.createElement('span'); label.textContent = action.startsWith('slot') ? `Inventory ${action.slice(4)}` : { up:'Move up', down:'Move down', left:'Move left', right:'Move right', attack:'Attack', tame:'Tame animal', eat:'Eat once', skill:'Pet skills', pets:'Pet stance', auto:'Auto attack', lock:'Lock aim', map:'Map', shop:'Shop' }[action];
+    const button = document.createElement('button'); button.className = 'secondary'; button.textContent = captureBinding === action ? 'Press a key…' : keyLabel(key); button.setAttribute('aria-label', `Change ${label.textContent} key, currently ${keyLabel(key)}`);
+    button.onclick = () => { captureBinding = action; renderKeybinds(); rows.querySelector(`[data-action="${action}"]`)?.focus(); }; button.dataset.action = action;
+    row.append(label, button); rows.append(row);
+  }
+}
+$('keybind-settings').onclick = () => { const hidden = $('keybind-section').classList.toggle('hidden'); $('keybind-settings').setAttribute('aria-expanded', String(!hidden)); captureBinding = null; renderKeybinds(); };
+$('reset-keybinds').onclick = () => { bindings = { ...DEFAULT_KEYS }; localStorage.removeItem('wildbound-keybinds'); captureBinding = null; renderKeybinds(); };
+const keyDown = action => game.keys.has(bindings[action]);
+const typing = () => ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
 addEventListener('keydown', event => {
-  if (!game.running || typing()) return;
   const key = event.key.toLowerCase();
+  if (captureBinding) {
+    event.preventDefault(); event.stopPropagation();
+    if (key === 'escape') { captureBinding = null; renderKeybinds(); return; }
+    if (['enter', 'shift', 'control', 'alt', 'meta'].includes(key)) return;
+    const previous = bindings[captureBinding];
+    for (const action of Object.keys(bindings)) if (action !== captureBinding && bindings[action] === key) bindings[action] = previous;
+    bindings[captureBinding] = key; captureBinding = null; localStorage.setItem('wildbound-keybinds', JSON.stringify(bindings)); renderKeybinds(); return;
+  }
+  if (!game.running || typing()) return;
   if (key === 'escape') { if (game.overlay) closeOverlay(); else togglePause(); return; }
+  if (game.paused || key === 'enter' && event.target.closest?.('button')) return;
   if (key === 'enter') { event.preventDefault(); openChat(); return; }
   if (game.overlay || game.paused) return;
-  if (/^[1-9]$/.test(key)) selectSlot(+key - 1);
-  else if (key === ' ') { event.preventDefault(); cmd({ t: 'tame' }); }
-  else if (key === 'q') cmd({ t: 'eat' });
-  else if (key === 'f' || key === ',') cmd({ t: 'skill' });
-  else if (key === 'x') setPetMode(game.petMode === 'attack' ? 'defend' : 'attack');
-  else if (key === 'e') { game.auto = !game.auto; toast(`Auto attack ${game.auto ? 'on' : 'off'}`); }
-  else if (key === 'l') { game.lock = !game.lock; toast(`Aim ${game.lock ? 'locked' : 'free'}`); }
-  else if (key === 'm') openMap();
-  else if (key === 'c') openShop();
+  if (event.repeat) return;
+  const inventorySlot = Object.keys(bindings).find(action => action.startsWith('slot') && bindings[action] === key);
+  if (inventorySlot) selectSlot(+inventorySlot.slice(4) - 1);
+  else if (key === bindings.tame) { event.preventDefault(); cmd({ t: 'tame' }); }
+  else if (key === bindings.eat) cmd({ t: 'eat' });
+  else if (key === bindings.skill) cmd({ t: 'skill' });
+  else if (key === bindings.pets) setPetMode(game.petMode === 'attack' ? 'defend' : 'attack');
+  else if (key === bindings.auto) { game.auto = !game.auto; toast(`Auto attack ${game.auto ? 'on' : 'off'}`); }
+  else if (key === bindings.lock) { game.lock = !game.lock; toast(`Aim ${game.lock ? 'locked' : 'free'}`); }
+  else if (key === bindings.map) openMap();
+  else if (key === bindings.shop) openShop();
   game.keys.add(key);
 });
 addEventListener('keyup', event => game.keys.delete(event.key.toLowerCase()));
@@ -554,7 +596,9 @@ canvas.addEventListener('pointerdown', event => {
   game.pointer.x = event.clientX; game.pointer.y = event.clientY;
   if (event.button === 2) {
     const p = screenToWorld(event.clientX, event.clientY);
-    setPetMode('move', p);
+    const target = [...(game.view?.animals || []), ...(game.view?.players || [])].find(a => !a.dead && a.id !== game.id && a.owner !== game.id && Math.hypot(a.x-p.x, a.y-p.y) <= a.r + 15);
+    if (target) { cmd({ t: 'pets', mode: 'attack', target: target.id }); game.marker = { ...p, at: clientNow() }; }
+    else setPetMode('move', p);
     return;
   }
   if (event.button === 0) game.pointer.down = true;
@@ -616,8 +660,16 @@ function togglePause() {
   if (!game.running) return;
   game.paused = !game.paused;
   $('pause').classList.toggle('hidden', !game.paused);
-  game.keys.clear(); game.pointer.down = false;
+  game.keys.clear(); game.pointer.down = false; captureBinding = null;
+  if (game.paused) $('resume').focus(); else $('menu-button').focus();
 }
+$('pause').addEventListener('keydown', event => {
+  if (event.key !== 'Tab') return;
+  const buttons = [...$('pause').querySelectorAll('button')].filter(b => b.getClientRects().length && !b.disabled);
+  const first = buttons[0], last = buttons.at(-1);
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+});
 $('menu-button').onclick = togglePause; $('resume').onclick = togglePause;
 $('quit').onclick = () => leaveGame(); $('death-quit').onclick = () => leaveGame();
 $('tame-prompt').onclick = () => cmd({ t: 'tame' });
@@ -636,32 +688,22 @@ function renderShop() {
   const me = myData(), self = game.cur?.players.get(game.id);
   if (!me || !self) return;
   const grid = $('shop-items'); grid.replaceChildren();
-  for (const hat of HATS) {
-    const card = document.createElement('div'); card.className = `shop-item${self.hat === hat.id ? ' on' : ''}`;
+  for (const hat of [...HATS.map(h => ({...h, category:'hat'})), ...ACCESSORIES.map(a => ({...a, category:'accessory'}))]) {
+    const wearing = (hat.category === 'hat' ? self.hat : self.wings) === hat.id;
+    const card = document.createElement('div'); card.className = `shop-item${wearing ? ' on' : ''}`;
     const art = document.createElement('canvas'); art.width = art.height = 96;
     const c = art.getContext('2d'); c.translate(48, 50); c.scale(.95, .95);
-    R.drawPlayer(c, { x: 0, y: 0, angle: -Math.PI / 2, skin: self.skin, hat: hat.id, held: 'hand', r: 35 }, 0);
-    const owned = me.hats.includes(hat.id);
+    R.drawPlayer(c, { x: 0, y: 0, angle: -Math.PI / 2, skin: self.skin, hat: hat.category === 'hat' ? hat.id : self.hat, wings: hat.category === 'accessory' ? hat.id : self.wings, held: 'hand', r: 35 }, 0);
+    const owned = (hat.category === 'hat' ? me.hats : me.accessories || []).includes(hat.id);
     const info = document.createElement('div');
     info.innerHTML = `<h3>${escapeHtml(hat.name)}</h3><p>${escapeHtml(hat.note || 'Plain and simple')}</p>`;
     const button = document.createElement('button');
     button.className = owned ? 'secondary' : 'primary';
-    button.textContent = self.hat === hat.id ? 'Wearing' : owned ? 'Wear' : `${hat.cost} gold`;
-    button.disabled = self.hat === hat.id || (!owned && me.res.gold < hat.cost);
-    button.onclick = () => { cmd({ t: 'hat', id: hat.id }); setTimeout(renderShop, 150); };
+    button.textContent = wearing ? 'Wearing' : owned ? 'Wear' : `${hat.cost} gold`;
+    button.disabled = wearing || (!owned && me.res.gold < hat.cost);
+    button.onclick = () => { cmd({ t: hat.category, id: hat.id }); setTimeout(renderShop, 150); };
     card.append(art, info, button); grid.append(card);
   }
-}
-
-/** The closest biome other than `id`, measured to the edge of its square. */
-function nearestOtherBiome(x, y, id) {
-  let best = null, bd = Infinity;
-  BIOME_GRID.forEach((row, j) => row.forEach((b, i) => {
-    if (b === id) return;
-    const dx = Math.max(i * BIOME_CELL - x, 0, x - (i + 1) * BIOME_CELL), dy = Math.max(j * BIOME_CELL - y, 0, y - (j + 1) * BIOME_CELL);
-    const d = Math.hypot(dx, dy); if (d < bd) { bd = d; best = b; }
-  }));
-  return BIOME_BY_ID[best];
 }
 
 const bossHeads = new Map();
@@ -673,12 +715,12 @@ function bossHead(id) {
 
 function drawMap(cv, full) {
   const m = cv.getContext('2d'), size = cv.width, k = size / WORLD.w;
-  const view = game.view, cell = BIOME_CELL * k;
-  // biomes as dimmed squares, darker on the small map so the icons stand out
-  BIOME_GRID.forEach((row, j) => row.forEach((id, i) => { m.fillStyle = BIOME_BY_ID[id].ground; m.fillRect(i * cell, j * cell, cell + 1, cell + 1); }));
+  const view = game.view, season = biomeState(game.cur?.time || 0);
+  m.fillStyle = season.biome.ground; m.fillRect(0, 0, size, size);
   m.fillStyle = full ? 'rgba(20,14,6,.3)' : 'rgba(26,18,10,.62)'; m.fillRect(0, 0, size, size);
   if (full && game.grid) {
     for (const n of game.grid.list) {
+      if (n.respawnAt) continue;
       const b = BIOME_BY_ID[n.biome];
       m.fillStyle = n.type === 'tree' ? b.tree[0] : n.type === 'rock' ? b.rock[0] : n.type === 'bush' ? b.bush[0] : n.type.includes('gold') ? '#f2c230' : '#a8743f';
       m.globalAlpha = .7; m.beginPath(); m.arc(n.x * k, n.y * k, Math.max(1.5, n.r * k), 0, TAU); m.fill();
@@ -746,14 +788,14 @@ function updateHud(now) {
   // hotbar
   const sel = selIndex();
   const mineCount = kind => game.cur.structures.filter(s => s.owner === game.id && ITEM_BY_ID.get(s.item)?.kind === kind).length;
-  if (changed('hotbar', data.items.join())) {
+  if (changed('hotbar', data.items.join() + JSON.stringify(bindings))) {
     const bar = $('hotbar'); bar.replaceChildren();
     data.items.forEach((id, i) => {
       const it = ITEM_BY_ID.get(id);
       const slot = document.createElement('button');
       slot.className = 'slot';
       slot.title = `${it.name}${it.cost ? ` · ${costText(it.cost)}` : ''}`;
-      slot.innerHTML = `<img src="${iconUrl(id)}" alt=""><kbd>${i + 1}</kbd>${it.kind || it.slot === 'food' ? `<small>${costText(it.cost)}</small>` : ''}`;
+      slot.innerHTML = `<img src="${iconUrl(id)}" alt=""><kbd>${keyLabel(bindings[`slot${i+1}`])}</kbd>${it.kind || it.slot === 'food' ? `<small>${costText(it.cost)}</small>` : ''}`;
       slot.onclick = () => selectSlot(i);
       bar.append(slot);
     });
@@ -814,9 +856,9 @@ function updateHud(now) {
     $('flags').innerHTML = tags.map(t => `<span>${t}</span>`).join('');
   }
   // biome strip above the minimap: where you are, shading into the nearest neighbour
-  const here = biomeAt(me.x, me.y), next = nearestOtherBiome(me.x, me.y, here.id);
-  if (changed('biome', `${here.id}|${next.id}`)) {
-    $('biome-strip').innerHTML = `<i style="--a:${here.ground};--b:${next.ground}"></i><b>${here.name}</b>`;
+  const season = biomeState(view.t), here = season.biome, next = BIOMES[(season.index + 1) % BIOMES.length];
+  if (changed('biome', `${here.id}|${next.id}|${Math.ceil((season.endsAt-view.t)/60)}`)) {
+    $('biome-strip').innerHTML = `<i style="--a:${here.ground};--b:${next.ground}"></i><b>${here.name} · ${Math.ceil((season.endsAt-view.t)/60)}m</b>`;
   }
   // boss bar: only for a boss that is awake and close
   const boss = (game.cur.boss || []).map(([x, y, frac, id, sleep]) => ({ x, y, frac, id, sleep })).find(b => !b.sleep && Math.hypot(b.x - me.x, b.y - me.y) < 1300);
@@ -834,7 +876,7 @@ function updateHud(now) {
   game.lifeStart ??= game.cur.time;
   if (!game.dead && me.dead) $('death').classList.remove('hidden');
   if (now - (game.minimapAt || 0) > 150) { game.minimapAt = now; drawMap($('minimap'), false); renderFeed(); }
-  if (game.overlay === 'shop' && changed('shop', `${data.res.gold}|${me.hat}|${data.hats.join()}`)) renderShop();
+  if (game.overlay === 'shop' && changed('shop', `${data.res.gold}|${me.hat}|${me.wings}|${data.hats.join()}|${data.accessories?.join()}`)) renderShop();
 }
 
 function describe(it) {
@@ -876,6 +918,7 @@ function renderPets(view, data) {
       if (p) {
         const def = PET_BY_ID.get(p.species);
         card.innerHTML = `<span class="face"><img src="${R.petPortrait(p.species, 96).toDataURL()}" alt=""><u>${i + 1}</u><q class="lvl"></q></span><div><b>${escapeHtml(def.name)}</b><small>${PET_STAGE[p.stage]} · ${def.types.join('/')}</small><span class="hp"><i></i></span><span class="xp"><i></i></span></div><em class="cd" title="${SKILLS[def.skill].name}"></em>`;
+        const release = document.createElement('button'); release.className = 'release-pet'; release.textContent = 'Release'; release.setAttribute('aria-label', `Release ${def.name}`); release.onclick = event => { event.stopPropagation(); cmd({ t: 'release', id: p.id }); }; card.append(release);
         card.onclick = () => cmd({ t: 'skill', slot: i });
       } else card.innerHTML = '<small>Empty slot</small>';
       box.append(card);
@@ -907,6 +950,7 @@ function renderPets(view, data) {
 
 const SOLID_KINDS = new Set(['wall', 'door', 'spike', 'windmill', 'turret', 'tower']);
 
+const dataBlind = view => !!view.meData?.fx?.[5];
 function drawWorld(now, dt) {
   const view = game.view = buildView();
   const { t, me } = view;
@@ -934,7 +978,7 @@ function drawWorld(now, dt) {
     R.drawStructure(ctx, s, t, { alpha: hidden ? .3 : 1 }); drawn++;
   }
   for (const h of view.hazards) R.drawHazard(ctx, h, t);
-  const nodes = game.grid ? game.grid.list.filter(n => inView(n, n.r + 60)) : [];
+  const nodes = game.grid ? game.grid.list.filter(n => !n.respawnAt && inView(n, n.r + 60)) : [];
   const drawNode = n => { const hit = game.nodeHits.get(n.id); R.drawResource(ctx, hit ? { ...n, hitDir: hit.dir } : n, undefined, t, hit ? nowS - hit.at : 9); drawn++; };
   for (const n of nodes) if (n.type !== 'tree') drawNode(n);
   for (const s of view.structures) {
@@ -961,13 +1005,13 @@ function drawWorld(now, dt) {
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   // walking into the darkness closes the light in around you over a second
-  const want = me && biomeAt(me.x, me.y).dark ? 1 : 0;
+  const want = me && biomeAt(me.x, me.y, t).dark ? 1 : 0;
   game.dark = clamp((game.dark || 0) + Math.sign(want - (game.dark || 0)) * dt, 0, 1);
-  const dark = game.dark;
+  const dark = dataBlind(view) ? 1 : game.dark;
   if (dark > 0 && me) {
     const px = W / 2 + (me.x - cam.x) * zoom, py = H / 2 + (me.y - cam.y) * zoom;
     const g = ctx.createRadialGradient(px, py, 260 * zoom, px, py, 760 * zoom);
-    g.addColorStop(0, 'rgba(8,6,24,0)'); g.addColorStop(1, `rgba(8,6,24,${.93 * dark})`);
+    g.addColorStop(0, dataBlind(view) ? 'rgba(32,8,40,.7)' : 'rgba(8,6,24,0)'); g.addColorStop(1, `rgba(8,6,24,${.93 * dark})`);
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
   writeTestHooks(view, drawn);
@@ -978,7 +1022,7 @@ function drawPlacement(view, t) {
   if (!me || me.dead || !data) return;
   const it = ITEM_BY_ID.get(data.items[selIndex()]);
   if (!it?.kind) return;
-  const d = me.r + it.r + 4, x = me.x + Math.cos(me.angle) * d, y = me.y + Math.sin(me.angle) * d;
+  const d = S.placementDistance(me, it), x = me.x + Math.cos(me.angle) * d, y = me.y + Math.sin(me.angle) * d;
   const mirror = { grid: game.grid, structures: view.structures, players: Object.fromEntries(view.players.map(p => [p.id, p])), animals: view.animals };
   const ok = game.grid && S.placeable(mirror, x, y, it) && affordable(data.res, it.cost);
   R.drawStructure(ctx, { item: it.id, x, y, r: it.r, rot: it.kind === 'boost' ? me.angle : 0 }, t, { alpha: .45 });
@@ -987,6 +1031,7 @@ function drawPlacement(view, t) {
 
 function drawLabels(view, t) {
   const me = view.me;
+  for (const s of view.structures) if (t - s.hitAt < 3) R.drawNameplate(ctx, s.x, s.y - s.r - 14, '', s.hp / s.maxHp, '#d9c488');
   for (const p of view.players) {
     if (p.dead) continue;
     const self = p.id === game.id;
