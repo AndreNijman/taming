@@ -1,6 +1,6 @@
 // Canvas renderer. Original outlined-cartoon art: everything is drawn from code
 // with a thick dark outline, a flat fill, one lighter highlight and a soft drop shadow.
-import { ITEM_BY_ID, PET_BY_ID, BOSS_BY_ID, TIERS, WORLD, BIOMES, BIOME_BY_ID, BIOME_GRID, BIOME_CELL, biomeAt } from './data.js';
+import { ITEM_BY_ID, PET_BY_ID, BOSS_BY_ID, TIERS, WORLD, BIOMES, BIOME_BY_ID, BIOME_GRID, BIOME_CELL, biomeAt, HAT_BY_ID, ACCESSORY_BY_ID, TYPES } from './data.js';
 
 const TAU = Math.PI * 2;
 const OUTLINE = '#2b241d';
@@ -269,6 +269,7 @@ export function drawTool(c, itemId, scale = 1) {
   c.save(); c.scale(scale, scale);
   const shaft = (len, w = 7, from = 0) => { c.beginPath(); c.moveTo(from, 0); c.lineTo(len, 0); stroke2(c, w, HANDLE); };
   switch (item.shape) {
+    case 'blowpipe': c.beginPath();c.moveTo(0,0);c.lineTo(56,0);stroke2(c,8,'#956f41');break;
     case 'net': c.beginPath(); c.moveTo(-12,0);c.lineTo(34,0);stroke2(c,4,'#a97a49');ellipse(c,38,0,16,22);ink(c,'rgba(218,224,201,.35)',3);break;
     case 'saddle': c.beginPath();c.roundRect(0,-18,30,36,8);ink(c,'#91603d',4);c.beginPath();c.moveTo(5,0);c.lineTo(25,0);stroke2(c,4,'#d4b27a');break;
 
@@ -416,7 +417,7 @@ function drawFoodIcon(c, kind, k = 1) {
 
 export const FURS = ['#e7c08f', '#c98d5a', '#f1dcc0', '#9c6b48', '#d9a46f', '#bfa38a', '#e9b77d', '#a77b5b'];
 const TWO_HANDED = new Set(['spear', 'naginata', 'hammer', 'pickaxe', 'axe', 'labrys', 'katana']);
-const RANGED = new Set(['bow', 'crossbow', 'appletor', 'slingshot']);
+const RANGED = new Set(['bow', 'crossbow', 'appletor', 'slingshot','blowpipe']);
 const DUAL = new Set(['dagger', 'cleaver']);
 
 export function drawPlayer(c, p, time, opts = {}) {
@@ -439,8 +440,11 @@ export function drawPlayer(c, p, time, opts = {}) {
   c.rotate(p.angle);
 
   if (p.wings && p.wings !== 'none') {
-    const color = { 'baby-wings':'#d7c8ab', 'dragon-wings':'#6d9e5a', 'dark-wings':'#4a3a61', 'demon-wings':'#b55042', 'round-wings':'#b6974f', 'angel-wings':'#e4dfce' }[p.wings] || '#c4b49c';
-    for (const side of [-1,1]) { c.beginPath(); c.moveTo(-R*.3,side*R*.4); c.quadraticCurveTo(-R*.9,side*R*2.2,-R*1.7,side*R*1.2); c.lineTo(-R*1.1,side*R*.65); c.lineTo(-R*1.4,side*R*.3); c.closePath(); ink(c,color,4); }
+    const acc=ACCESSORY_BY_ID.get(p.wings),color=acc?.element?TYPES[acc.element]?.color:{'baby-wings':'#d7c8ab','dragon-wings':'#6d9e5a','dark-wings':'#4a3a61','demon-wings':'#b55042','round-wings':'#b6974f','angel-wings':'#e4dfce'}[p.wings]||'#a18857';
+    if(acc?.visual==='bag'){c.beginPath();c.roundRect(-R*1.2,-R*.6,R*.7,R*1.2,8);ink(c,color,4);c.beginPath();c.moveTo(-R*.7,-R*.5);c.lineTo(-R*.7,R*.5);stroke2(c,4,'#dac693');}
+    else if(acc?.visual==='cape'){c.beginPath();c.moveTo(-R*.4,-R*.7);c.lineTo(-R*1.8,-R);c.lineTo(-R*1.5,0);c.lineTo(-R*1.8,R);c.lineTo(-R*.4,R*.7);c.closePath();ink(c,color,4);}
+    else if(acc?.visual==='tail'){c.beginPath();c.moveTo(-R*.7,0);c.quadraticCurveTo(-R*1.8,-R*.8,-R*1.6,R*.6);stroke2(c,10,color);}
+    else for (const side of [-1,1]) { c.beginPath(); c.moveTo(-R*.3,side*R*.4); c.quadraticCurveTo(-R*.9,side*R*2.2,-R*1.7,side*R*1.2); c.lineTo(-R*1.1,side*R*.65); c.lineTo(-R*1.4,side*R*.3); c.closePath(); ink(c,color,4); }
   }
   // ears sit behind the head
   for (const side of [-1, 1]) {
@@ -498,6 +502,8 @@ export function drawPlayer(c, p, time, opts = {}) {
 }
 
 export function drawHat(c, hat, R, time = 0) {
+  if(hat.startsWith('cosmetic-')){circle(c,0,0,R*.7);ink(c,hat.slice(9),4);return;}
+  if(hat.startsWith('element-')){const element=hat.slice(8),color=TYPES[element]?.color||'#c4ac70';starPath(c,0,0,R*.85,R*.55,element==='normal'?5:6,0,.1);ink(c,color,4);circle(c,0,0,R*.28);ink(c,'#ded0aa',3);return;}
   switch (hat) {
     case 'leaf':
       for (let i = 0; i < 3; i++) { c.save(); c.rotate(-.5 + i * .5); ellipse(c, -R * .25, 0, R * .55, R * .2); ink(c, '#7bc043', 3.5); c.restore(); }
@@ -554,10 +560,12 @@ export function drawAnimal(c, a, time, opts = {}) {
   c.scale(scale, scale);
   ellipse(c, 0, 10, 30, 22); c.fillStyle = SHADOW; c.fill();
   if (a.angry && !a.owner) { circle(c, 0, 0, 36); c.lineWidth = 3; c.strokeStyle = 'rgba(226,65,59,.55)'; c.stroke(); }
+  if(a.decoy){c.globalAlpha=.55;circle(c,0,0,37);c.lineWidth=3;c.strokeStyle='#6cb5da';c.stroke();}
   c.rotate(a.angle);
   drawCreature(c, def, a.sleep, walk, time - (a.attackAt ?? -9), time);
   if (opts.flash) { circle(c, 0, 0, 28); c.fillStyle = 'rgba(255,60,40,.3)'; c.fill(); }
   c.restore();
+  if(a.castUntil>time&&a.castKind){const color=TYPES[def.types[0]]?.color||'#d4c178';c.save();circle(c,a.x,a.y,a.r+25);c.strokeStyle=color;c.lineWidth=5;c.setLineDash([12,9]);c.lineDashOffset=-time*25;c.stroke();c.setLineDash([]);c.restore();}
   if (a.sleep) {
     const t = time * 1.4 + (idSeed(a.id) % 10);
     c.save(); c.font = '800 18px "Baloo 2", sans-serif'; c.textAlign = 'center';
@@ -571,7 +579,7 @@ export function drawAnimal(c, a, time, opts = {}) {
   }
 }
 
-const NO_LEGS = new Set(['bird', 'serpent', 'fish', 'insect', 'bat', 'seal', 'spider', 'crab', 'scorpion']);
+const NO_LEGS = new Set(['bird', 'serpent', 'fish', 'insect', 'bat', 'seal', 'spider', 'crab', 'scorpion','octopus']);
 
 // One generic chunky top-down creature, specialised by body template.
 export function drawCreature(c, def, sleeping, walk = 0, attackT = 9, time = 0) {
@@ -595,6 +603,7 @@ export function drawCreature(c, def, sleeping, walk = 0, attackT = 9, time = 0) 
       }
     }
   }
+  if(body==='octopus')for(let i=0;i<8;i++){const angle=i*Math.PI/4;c.save();c.rotate(angle);c.beginPath();c.moveTo(12,0);c.quadraticCurveTo(30,walk*4,42,8);stroke2(c,8,fill);c.restore();}
   // tail
   c.save();
   c.rotate(Math.sin(time * 3.3) * .2);
@@ -738,7 +747,7 @@ export function drawBoss(c, a, time, opts = {}) {
   // attack telegraph: the sweep arc lights up as it lands
   if (slam > 0) {
     c.save(); c.rotate(a.angle); c.globalAlpha = slam * .35;
-    c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, R + def.reach * .7, -1.3, 1.3); c.closePath(); c.fillStyle = '#ff5a3a'; c.fill(); c.restore();
+    c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, R + def.reach * .7, 0, TAU); c.closePath(); c.fillStyle = '#ff5a3a'; c.fill(); c.restore();
   }
   c.rotate(a.angle);
   const fill = def.color, accent = def.accent, light = shade(fill, .2);
@@ -837,6 +846,7 @@ export function drawBoss(c, a, time, opts = {}) {
   if (opts.flash) { circle(c, 0, 0, R); c.fillStyle = 'rgba(255,60,40,.25)'; c.fill(); }
   c.restore();
   // a sleeping boss snores big Zs until someone strikes it
+  if(a.castUntil>time&&a.castKind){const color=TYPES[def.types[0]]?.color||'#d4c178';c.save();circle(c,a.x,a.y,a.r+25);c.strokeStyle=color;c.lineWidth=5;c.setLineDash([12,9]);c.lineDashOffset=-time*25;c.stroke();c.setLineDash([]);c.restore();}
   if (a.sleep) {
     const t = time * .9 + (s % 10);
     c.save(); c.textAlign = 'center';
@@ -962,6 +972,8 @@ export function drawProjectile(c, j, time) {
     case 'thorn':
       c.beginPath(); c.moveTo(20, 0); c.lineTo(-10, -9); c.lineTo(-4, 0); c.lineTo(-10, 9); c.closePath(); ink(c, '#7a4a2b', 3);
       break;
+    case 'plantball': circle(c,0,0,14);ink(c,'#6da844',3);break;
+    case 'waterball': circle(c,0,0,14);ink(c,'#64a8cc',3);break;
     case 'fireball':
       for (let i = 3; i > 0; i--) { circle(c, -i * 9, 0, 6 + i); c.fillStyle = `rgba(255,${120 + i * 30},40,${.25 + .1 * (3 - i)})`; c.fill(); }
       circle(c, 0, 0, 14); ink(c, '#ff7a2e', 3.5); circle(c, 2, -2, 7); c.fillStyle = '#ffe07a'; c.fill();
@@ -972,8 +984,8 @@ export function drawProjectile(c, j, time) {
 }
 
 export function drawHazard(c, h, time) {
-  if (['poison','roots','whirlpool'].includes(h.kind)) {
-    c.save(); circle(c,h.x,h.y,h.r); c.fillStyle = time < h.at ? 'rgba(160,70,180,.15)' : h.kind === 'roots' ? 'rgba(68,108,42,.6)' : h.kind === 'whirlpool' ? 'rgba(44,100,158,.65)' : 'rgba(118,44,140,.55)'; c.fill(); c.strokeStyle = '#b083ba'; c.lineWidth = 4; c.stroke(); c.restore(); return;
+  if (['poison','roots','whirlpool','toxic-fog','lava-pool'].includes(h.kind) || h.kind.startsWith('pet-')) {
+    c.save(); circle(c,h.x,h.y,h.r); c.fillStyle = time < h.at ? 'rgba(160,70,180,.15)' : h.kind.includes('roots') || h.kind.includes('chain') ? 'rgba(68,108,42,.6)' : h.kind.includes('lava') || h.kind.includes('wildfire') ? 'rgba(194,74,35,.55)' : h.kind.includes('whirlpool') || h.kind.includes('ice') ? 'rgba(44,100,158,.65)' : 'rgba(118,44,140,.55)'; c.fill(); c.strokeStyle = '#b083ba'; c.lineWidth = 4; c.stroke(); c.restore(); return;
   }
 
   const left = h.at - time;

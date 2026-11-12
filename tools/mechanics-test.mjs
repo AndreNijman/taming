@@ -109,7 +109,7 @@ test("each breakable resource depletes, stops collision and respawns; gold stays
   for (const type of ["tree", "rock", "bush", "log", "cactus"]) {
     const { w, p } = setup(),
       n = node(w, type, p.x + 90, p.y);
-    n.hp = 4;
+    n.hp = ITEM_BY_ID.get("hand").bdm;
     const xp = p.xp;
     attack(w, p);
     assert.equal(n.hp, 0, type);
@@ -602,7 +602,7 @@ test("species skills have distinct sustained effects and cooldowns", () => {
   assert.equal(S.skillCooldown(rabbit), 20);
   S.command(w, p.id, { t: "skill" });
   assert.equal(rabbit.castKind, "vines");
-  assert.ok(p.hp > 50);
+  assert.equal(p.hp, 50, "baby rabbit has no vampirism");
   const hp = enemy.hp;
   step(w, 1);
   assert.ok(enemy.hp < hp);

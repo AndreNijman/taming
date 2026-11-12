@@ -1,7 +1,11 @@
+import { ITEM_REFERENCE } from './reference-items.js';
+import { BOSS_PROFILES } from './boss-data.js';
+import { ANIMAL_REFERENCE } from './reference-animals.js';
+import { EQUIPMENT_HATS, EQUIPMENT_ACCESSORIES } from './equipment-data.js';
 // Shared clean-room game content. No DOM or Worker globals: imported by the
 // browser client, the shared simulation and the Cloudflare Worker.
-// Mechanics follow publicly documented Taming.io behaviour; all names, art and
-// code here are original.
+// Mechanics and factual labels follow public Taming.io documentation.
+// Artwork and implementation are original.
 
 export const WORLD = { w: 9600, h: 9600 };
 export const CENTER = { x: WORLD.w / 2, y: WORLD.h / 2 };
@@ -165,13 +169,14 @@ for (const [k, tier] of WEAPON_TIERS.entries()) if (k > 0) {
 }
 for (const s of SECONDARY) if (s.tier === 'stone') s.name = s.name.replace('Stone ', s.family === 'bow' ? 'Stone ' : '');
 
+for(const [k,tier] of WEAPON_TIERS.entries())SECONDARY.push({id:`${tier}-blowpipe`,name:`${TIERS[tier].name} Blowpipe`,slot:'secondary',family:'blowpipe',shape:'blowpipe',tier,dmg:4+k,adm:4+k,bdm:1,reload:1.55,range:700,speed:75,ammo:{wood:8+2*k,food:4+k},projectile:1000});
 const TOOLS = [
   { id: 'bug-net', name: 'Bug Net', slot: 'tool', shape: 'net', tier: 'wood', reload: .8, range: 100, speed: 100, catch: true },
   { id: 'gold-bug-net', name: 'Golden Bug Net', slot: 'tool', shape: 'net', tier: 'gold', reload: .8, range: 145, speed: 95, catch: true },
-  { id: 'saddle', name: 'Saddle', slot: 'tool', shape: 'saddle', tier: 'wood', reload: .5, range: 160, speed: 95, mount: true },
-  ...['racing','battle','crystal','honey','turtle'].map(kind=>({id:`${kind}-saddle`,name:`${kind[0].toUpperCase()+kind.slice(1)} Saddle`,slot:'tool',shape:'saddle',tier:'gold',reload:.5,range:160,speed:90,mount:true,mountBuff:kind})),
+  { id: 'saddle', name: 'Saddle', slot: 'tool', shape: 'saddle', tier: 'wood', reload: .5, range: 160, speed: 60, mount: true },
+  ...['racing','battle','crystal','honey','turtle'].map(kind=>({id:`${kind}-saddle`,name:`${kind[0].toUpperCase()+kind.slice(1)} Saddle`,slot:'tool',shape:'saddle',tier:'gold',reload:.5,range:160,speed:60,mount:true,mountBuff:kind})),
   { id: 'appletor', name: 'Appletor', slot: 'tool', shape: 'appletor', tier: 'wood', reload: .7, range: 600, speed: 65, ammo: { food: 5 }, healPlayer: 10, healPet: 20, tameTool: 'appletor', projectile: 900 },
-  { id: 'slingshot', name: 'Slingshot', slot: 'tool', shape: 'slingshot', tier: 'wood', reload: .7, range: 600, speed: 65, ammo: { stone: 5 }, dmg: 10, adm: 15, tameTool: 'slingshot', projectile: 1000 },
+  { id: 'slingshot', name: 'Slingshot', slot: 'tool', shape: 'slingshot', tier: 'wood', reload: .85, range: 600, speed: 65, ammo: { stone: 5 }, dmg: 10, adm: 15, tameTool: 'slingshot', projectile: 1000 },
   { id: 'gold-appletor', name: 'Golden Appletor', slot: 'tool', shape: 'appletor', tier: 'gold', reload: .8, range: 650, speed: 55, ammo: { food: 10 }, healPlayer: 20, healPet: 40, tameTool: 'appletor', safer: true, projectile: 950 },
   { id: 'gold-slingshot', name: 'Golden Slingshot', slot: 'tool', shape: 'slingshot', tier: 'gold', reload: .7, range: 650, speed: 60, ammo: { stone: 8 }, dmg: 16, adm: 24, tameTool: 'slingshot', safer: true, projectile: 1100 },
 ];
@@ -180,14 +185,18 @@ const food = (id, name, icon, heal, cost, extra = {}) => ({ id, name, slot: 'foo
 const FOODS = [
   food('apple', 'Apple', 'apple', 10, 5),
   food('cookie', 'Cookie', 'cookie', 12, 8),
+  food('croissant', 'Croissant', 'waffle', 15, 10),
   food('waffle', 'Waffle', 'waffle', 18, 12),
-  food('sandwich', 'Sandwich', 'sandwich', 5, 12, { hot: 5 }),
+  food('sandwich', 'Sandwich', 'sandwich', 8, 12, { hot: 4 }),
+  food('salad', 'Salad', 'sandwich', 10, 15, { hot: 6 }),
   food('steak', 'Steak', 'steak', 12, 12, { armor: .1 }),
-  food('toffee', 'Toffee', 'toffee', 10, 10, { haste: .05 }),
+  food('eggs', 'Eggs', 'steak', 14, 14, { armor: .15 }),
+  food('toffee', 'Toffee Candy', 'toffee', 12, 10, { haste: .05 }),
+  food('biscuit', 'Biscuit', 'cookie', 12, 12, { haste: .1 }),
   food('cake', 'Cake', 'cake', 22, 15),
-  food('soup', 'Mushroom Soup', 'soup', 9, 18, { hot: 9 }),
+  food('soup', 'Mushroom Soup', 'soup', 12, 18, { hot: 8 }),
   food('meatballs', 'Meatballs', 'meatballs', 16, 18, { armor: .2 }),
-  food('roll', 'Roll Cake', 'roll', 14, 15, { haste: .15 }),
+  food('roll', 'Roll Cake', 'roll', 15, 16, { haste: .15 }),
 ];
 
 const build = (id, name, kind, tier, cost, hp, limit, extra = {}) => ({ id, name, slot: kind, kind, tier, cost, hp, limit, speed: 60, reload: .25, ...extra });
@@ -224,14 +233,57 @@ for (const [k,tier] of ['ruby','amethyst','sapphire'].entries()) {
 for (const [k,tier] of ['stone','gold','ruby','amethyst','sapphire'].entries()) {
   const base=BUILDINGS.find(b=>b.id==='fire-tower'); BUILDINGS.push({...base,id:`${tier}-tower`,name:`${TIERS[tier].name} Fire Tower`,tier,hp:300+k*80,dmg:22+k*4,cost:{wood:80,stone:30,gold:50+k*40}});
 }
-const COSMETICS = [...PRIMARY, ...SECONDARY, ...BUILDINGS].filter(it => it.tier === 'sapphire').flatMap(it => ['amber', 'diamond', 'emerald'].map(tier => ({ ...it, id: it.id.replace('sapphire-', `${tier}-`), tier, name: it.name.replace('Sapphire', TIERS[tier].name) })));
+BUILDINGS.push(
+  build('mega-boost-pad','Mega Boost Pad','boost','gold',{wood:30,stone:30,gold:150},100,10,{r:40,boostSpeed:1600}),
+  build('mega-heal-pad','Mega Heal Pad','heal','gold',{wood:80,stone:80,gold:400},500,2,{r:44,heal:20,every:.6}),
+  build('big-bear-trap','Big Bear Trap','trap','gold',{wood:30,stone:50,gold:100},300,4,{r:54,dmg:40,adm:120}),
+  build('mega-bear-trap','Mega Bear Trap','trap','gold',{wood:30,stone:50,gold:100},160,4,{r:40,dmg:60,adm:180}),
+);
+const bigBoost=BUILDINGS.find(b=>b.id==='big-boost-pad');bigBoost.hp=1000;bigBoost.cost={wood:40,stone:40,gold:200};
+// Upgrade the normal magic tower into its elemental or repair branch at age 9.
+const normalTower=BUILDINGS.find(it=>it.id==='fire-tower');normalTower.name='Normal Magic Tower';normalTower.element='normal';normalTower.towerElement='normal';
+for(const [k,tier]of ['stone','gold','ruby','amethyst','sapphire'].entries())for(const element of ['fire','ice','plant','electric','repair']){
+  if(element==='fire'){const existing=BUILDINGS.find(it=>it.id===`${tier}-tower`);if(existing){existing.towerElement=element;continue;}}
+  BUILDINGS.push(build(`${tier}-${element}-tower`,`${TIERS[tier].name} ${element[0].toUpperCase()+element.slice(1)} Tower`,'tower',tier,{wood:80,stone:30,gold:50+k*40},300+k*80,1,{r:44,dmg:22+k*4,every:7,range:600,element,towerElement:element}));
+}
+const bigBase=BUILDINGS.find(it=>it.id==='big-spike');bigBase.reference='Stone Big Spike';bigBase.hp=600;bigBase.touch=2;bigBase.cost={stone:25};
+for(const [k,tier]of ['gold','ruby','amethyst','sapphire'].entries())BUILDINGS.push(build(`${tier}-big-spike`,`${TIERS[tier].name} Big Spike`,'spike',tier,{wood:20,stone:20+k*5,gold:40+k*20},700+k*100,12,{r:54,touch:2+k,big:true}));
+BUILDINGS.push(build('ice-rampart','Ice Rampart','wall','sapphire',{},600,0,{r:65}));
+const COSMETICS = [...PRIMARY, ...SECONDARY, ...BUILDINGS].filter(it => it.tier === 'sapphire' && it.id.startsWith('sapphire-')).flatMap(it => ['amber', 'diamond', 'emerald'].map(tier => ({ ...it, id: it.id.replace('sapphire-', `${tier}-`), tier, name: it.name.replace('Sapphire', TIERS[tier].name) })));
 export const ITEMS = [...PRIMARY, ...SECONDARY, ...TOOLS, ...FOODS, ...BUILDINGS, ...COSMETICS];
+// Preserve original identifiers/art while using public numeric weapon and structure values.
+const title = (text='wood') => text.split('-').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ');
+for (const it of ITEMS) {
+  const tier = it.tier === 'wood' ? 'Wooden' : it.tier === 'gold' ? 'Golden' : title(it.tier);
+  let name = it.id==='hand'?'Hand':it.slot==='primary'?`${tier} ${title(it.variant ? VARIANT[it.family].id : it.family)}`:it.slot==='secondary'?`${tier} ${title(it.variantId || (it.shape==='crossbow'?'crossbow':it.family))}`:it.name;
+  if(it.kind && !['ice-rampart','fire-tower'].includes(it.id))name=`${tier} ${title(it.kind)}`;
+  if(it.kind==='tower')name=`${tier} ${title(it.towerElement||'fire')} Tower`;
+  if(it.id==='fire-tower')continue;
+  if(it.big && it.kind==='spike')name=`${it.tier==='stone'?'Stone':tier} Big Spike`;
+  if(['boost','heal','trap'].includes(it.kind))name=it.name;
+  const ref=ITEM_REFERENCE[name] || (['amber','diamond','emerald'].includes(it.tier) ? ITEM_REFERENCE[name.replace(tier,'Sapphire')] : null);if(!ref)continue;
+  it.reference=name;it.source='https://tamingio.fandom.com/wiki/Module:Items/data';
+  const v=ref.properties||{};
+  for(const [field,key]of Object.entries({speed:'speed',dmg:'player_damage',adm:'animal_damage',bdm:'building_damage',range:'range',knock:'knockback',hp:'durability',limit:'maximum',heal:'heal',healPlayer:'player_heal',healPet:'animal_heal'}))if(typeof v[key]==='number')it[field]=v[key];
+  if(typeof v.damage==='number'){it.dmg=v.player_damage??v.damage;it.adm=v.animal_damage??v.damage;}
+  if(it.slot==='primary'&&it.family==='hand')it.adm=it.dmg;
+  if(it.slot==='primary')it.harvest={wood:1,stone:1,food:1,gold:1,...ref.harvest};
+  if(v.reload){if(['turret','tower','windmill'].includes(it.kind))it.every=v.reload;else it.reload=v.reload;}
+  if(it.kind==='windmill'&&ref.harvest?.gold)it.gold=ref.harvest.gold;
+  if(ref.recipe){if(it.ammo)it.ammo=ref.recipe;else if(it.kind||it.slot==='food')it.cost=ref.recipe;}
+  if(v.protection)it.block=parseFloat(v.protection)/100;
+  if(v.magic_protection)it.skillBlock=parseFloat(v.magic_protection)/100;
+  if(it.shape==='shield'&&it.variantId==='spike-shield')it.touch=v.damage||2;
+  if(it.kind==='spike'&&v.damage)it.touch=v.damage;
+  if(it.kind==='heal')it.heal=it.id==='mega-heal-pad'?15:10;
+  if(it.kind==='boost'&&it.id==='mega-boost-pad')it.boostSpeed=1600;
+}
 export const ITEM_BY_ID = new Map(ITEMS.map(item => [item.id, item]));
 export const STARTING_ITEMS = ['hand', 'apple', 'wood-wall', 'wood-spike', 'wood-windmill', 'wood-door'];
 export const START_RESOURCES = { food: 60, wood: 60, stone: 60, gold: 0 };
 /** Food spent on every taming try, win or lose. */
 export const TAME_FOOD = 12;
-export const SLOT_ORDER = ['primary', 'secondary', 'tool', 'food', 'wall', 'spike', 'windmill', 'door', 'turret', 'tower', 'boost', 'trap', 'heal'];
+export const SLOT_ORDER = ['primary', 'food', 'wall', 'spike', 'windmill', 'door', 'secondary', 'tool', 'turret', 'tower', 'boost', 'trap', 'heal'];
 export const BUILD_LIMIT = 105;
 
 // ---------------- leveling ----------------
@@ -247,7 +299,7 @@ function nextTier(items, slot) {
   const cur = slotItem(items, slot);
   if (!cur) return null;
   const want = TIER_ORDER[tierRank(cur.tier) + 1];
-  const it = ITEMS.find(x => x.slot === slot && x.tier === want && (x.family ? x.family === cur.family && !!x.variant === !!cur.variant && x.shape === cur.shape : !x.big));
+  const it = ITEMS.find(x => x.slot === slot && x.tier === want && (x.family ? x.family === cur.family && !!x.variant === !!cur.variant && x.shape === cur.shape && x.variantId===cur.variantId : !!x.big===!!cur.big && x.towerElement===cur.towerElement));
   return it?.id || null;
 }
 function primaryAtTier(items, tier) {
@@ -262,7 +314,7 @@ function primaryAtTier(items, tier) {
 }
 function secondaryAtTier(items, tier) {
   const cur = slotItem(items, 'secondary');
-  if (!cur) return [`${tier}-bow`, `${tier}-shield`, `${tier}-wrench`].filter(id => ITEM_BY_ID.has(id));
+  if (!cur) return [`${tier}-bow`, `${tier}-shield`, `${tier}-wrench`, `${tier}-blowpipe`].filter(id => ITEM_BY_ID.has(id));
   // The branch is selected at gold and stays selected at later ages.
   const branches = tier === 'gold' ? cur.family === 'bow' ? ['bow','crossbow','musket','minigun'] : cur.family === 'shield' ? ['shield','crystal-shield','spike-shield'] : ['wrench'] : [cur.variantId || cur.shape];
   return branches.map(branch => `${tier}-${branch}`).filter(id => ITEM_BY_ID.has(id));
@@ -272,6 +324,7 @@ function buildingTier(items) {
   const selected = items.map(id => ITEM_BY_ID.get(id)).filter(it => ['spike','windmill','door','turret','tower'].includes(it.kind) && (it.tier !== 'wood' || ['tower','turret'].includes(it.kind))).sort((a,b)=>tierRank(b.tier)-tierRank(a.tier))[0];
   if (!selected) return [];
   if (selected.tier === 'sapphire') return cosmetics(items, selected.slot);
+  if(selected.kind==='tower'&&selected.towerElement==='normal')return ['fire','ice','plant','electric','repair'].map(element=>`stone-${element==='fire'?'tower':element+'-tower'}`);
   const next = nextTier(items, selected.slot);
   return next ? [next] : [];
 }
@@ -285,16 +338,16 @@ export const AGE_TREE = {
   4: items => secondaryAtTier(items, 'stone'),
   5: () => ['appletor', 'slingshot', 'bug-net', 'saddle'],
   6: items => primaryAtTier(items, 'gold'),
-  7: items => wallOrFood(items, ['waffle', 'sandwich', 'steak', 'toffee']),
+  7: items => wallOrFood(items, ['croissant', 'sandwich', 'steak', 'toffee']),
   8: () => ['boost-pad', 'bear-trap', 'heal-pad'],
   9: items => buildingTier(items),
   10: items => secondaryAtTier(items, 'gold'),
   11: items => primaryAtTier(items, 'ruby'),
-  12: items => wallOrFood(items, ['cake']),
+  12: items => wallOrFood(items, [({croissant:'waffle',sandwich:'salad',steak:'eggs',toffee:'biscuit'})[slotItem(items,'food')?.id]].filter(Boolean)),
   13: items => buildingTier(items),
   14: items => secondaryAtTier(items, 'ruby'),
   15: items => primaryAtTier(items, 'amethyst'),
-  16: items => wallOrFood(items, ['soup', 'meatballs', 'roll']),
+  16: items => wallOrFood(items, [({waffle:'cake',salad:'soup',eggs:'meatballs',biscuit:'roll'})[slotItem(items,'food')?.id]].filter(Boolean)),
   17: items => buildingTier(items),
   18: items => secondaryAtTier(items, 'amethyst'),
   19: items => primaryAtTier(items, 'sapphire'),
@@ -304,7 +357,7 @@ export const AGE_TREE = {
   23: items => buildingTier(items),
   24: items => cosmetics(items, 'secondary'),
   25: items => slotItem(items,'tool')?.mount ? ['racing','battle','crystal','honey','turtle'].map(kind=>`${kind}-saddle`) : [slotItem(items,'tool')?.catch ? 'gold-bug-net' : slotItem(items,'tool')?.id === 'slingshot' ? 'gold-slingshot' : 'gold-appletor'],
-  26: items => [slotItem(items, 'boost')?.id ? 'big-boost-pad' : null, slotItem(items, 'heal')?.id ? 'big-heal-pad' : null, slotItem(items, 'trap') ? 'big-spike' : null].filter(Boolean),
+  26: items => slotItem(items,'boost') ? ['big-boost-pad','mega-boost-pad'] : slotItem(items,'heal') ? ['big-heal-pad','mega-heal-pad'] : slotItem(items,'trap') ? ['big-bear-trap','mega-bear-trap'] : [],
   27: items => buildingTier(items),
 };
 export function ageChoices(age, items) {
@@ -329,6 +382,33 @@ export const TYPES = {
   insect: { color: '#a3c43a', strong: ['plant', 'poison'], weak: ['combat', 'fire', 'shadow'] },
   shadow: { color: '#6b5bb8', strong: ['normal', 'combat'], weak: ['poison', 'shadow'] },
 };
+TYPES['normal'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['normal'].weak = ["rock", "shadow"];
+TYPES['rock'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['rock'].weak = ["combat", "ancient"];
+TYPES['water'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['water'].weak = ["water", "plant", "dragon"];
+TYPES['electric'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['electric'].weak = ["rock", "electric", "plant", "dragon"];
+TYPES['plant'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['plant'].weak = ["plant", "poison", "insect", "fire", "dragon"];
+TYPES['poison'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['poison'].weak = ["rock", "poison", "insect"];
+TYPES['insect'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['insect'].weak = ["combat", "fire", "shadow", "fairy", "ancient"];
+TYPES['combat'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['combat'].weak = ["poison", "insect", "shadow", "fairy"];
+TYPES['fire'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['fire'].weak = ["rock", "water", "fire", "dragon"];
+TYPES['ice'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['ice'].weak = ["water", "fire", "ice"];
+TYPES['shadow'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['shadow'].weak = ["poison", "shadow", "fairy"];
+TYPES['dragon'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['dragon'].weak = ["fairy"];
+TYPES['fairy'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['fairy'].weak = ["rock", "fire", "ancient"];
+TYPES['ancient'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['ancient'].weak = ["ice", "dragon", "ancient"];
+TYPES['rock'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['rock'].strong = ["electric", "poison", "insect", "fire", "ice", "fairy"];
+TYPES['water'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['water'].strong = ["rock", "fire"];
+TYPES['electric'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['electric'].strong = ["water", "fairy"];
+TYPES['plant'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['plant'].strong = ["rock", "water"];
+TYPES['poison'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['poison'].strong = ["plant", "combat", "shadow"];
+TYPES['insect'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['insect'].strong = ["plant", "poison"];
+TYPES['combat'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['combat'].strong = ["normal", "rock", "ice"];
+TYPES['fire'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['fire'].strong = ["plant", "insect", "ice", "ancient"];
+TYPES['ice'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['ice'].strong = ["plant", "dragon", "ancient"];
+TYPES['shadow'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['shadow'].strong = ["normal", "combat"];
+TYPES['dragon'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['dragon'].strong = ["dragon", "ancient"];
+TYPES['fairy'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['fairy'].strong = ["combat", "shadow", "dragon"];
+TYPES['ancient'] ||= { color:'#9d8c72', strong:[], weak:[] }; TYPES['ancient'].strong = ["rock", "electric", "insect", "fire", "fairy"];
 export function typeMultiplier(attacker, defender) {
   if (!attacker || !defender) return 1;
   let m = 1;
@@ -405,26 +485,27 @@ for (const [id, name, biome, body, types, skill] of [
   ['ice-spirit', 'Ice Spirit', 'winter', 'fox', ['ice'], 'frost'],
   ['dune-spirit', 'Dune Spirit', 'desert', 'serpent', ['rock'], 'boulder'],
 ]) PETS.push(pet(id, name, biome, body, '#c4b688', '#f0d390', types, 'legendary', 4, 'appletor', 'neutral', [200, 450, 1200], [5, 12, 28], [200, 240, 280], skill));
-// Verified wiki stats for matching animals, without chase/follow speed multipliers.
-const ANIMAL_STATS = {
-  boar: [[200,450,1100],[4,10,22],[240,270,310]],
-  owl: [[300,600,1400],[3,10,18],[200,250,280]],
-  bat: [[150,300,700],[4,10,15],[250,270,330]],
-  'black-cat': [[200,350,800],[4,9,20],[260,300,340]],
-  camel: [[200,500,1000],[4,10,20],[250,280,320]],
-  caracal: [[200,400,900],[4,10,22],[210,260,290]],
-  'polar-bear': [[300,500,1250],[5,9,22],[210,250,260]],
-  'arctic-fox': [[200,400,900],[5,10,24],[240,280,310]],
-  raven: [[200,300,900],[4,12,20],[220,270,300]],
-  reindeer: [[300,800,1400],[4,10,22],[290,310,390]],
-  salamander: [[200,400,900],[3,9,15],[240,280,340]],
-  crab: [[300,700,2000],[4,10,22],[200,220,240]],
-  seal: [[400,1000,2000],[3,7,14],[210,250,290]],
-  shark: [[300,600,1400],[6,12,30],[220,260,300]],
-  scorpion: [[300,700,1400],[7,14,28],[220,240,270]],
-  spider: [[200,400,800],[7,15,22],[240,260,320]],
-};
-for (const def of PETS) if (ANIMAL_STATS[def.id]) [def.hp, def.bite, def.speed] = ANIMAL_STATS[def.id];
+// Stable IDs retain old clients' species references. Every animal uses a sourced stat/skill definition.
+const extraAnimals = [
+  ['cow','forest','bear','normal'],['bull','forest','bear','rock'],['dog','forest','canine','normal'],
+  ['fire-fairy','forest','bird','fire'], ['water-fairy','forest','bird','water'],
+  ['iceberg','winter','turtle','ice'], ['living-mushroom','darkness','bear','combat'],
+  ['white-spider','darkness','spider','normal'], ['stone-golem','desert','bear','rock'],
+  ['volcanic-golem','volcano','bear','fire'], ['mantle','volcano','turtle','rock'], ['octopus','ocean','octopus','water'],
+];
+for (const [id,biome,body,type] of extraAnimals) PETS.push(pet(id, id, biome, body, '#827566', '#c6bc92', [type], 'legendary', 8, 'slingshot','neutral',[200,400,1000],[4,8,20],[200,240,280],'blaze'));
+const REFERENCE_BIOMES = { 'deer':'winter', 'owl':'darkness' };
+for (const def of PETS) {
+  const ref = ANIMAL_REFERENCE[def.id];
+  if (!ref) throw new Error(`Missing animal reference: ${def.id}`);
+  Object.assign(def, { name:ref.reference, reference:ref.reference, source:ref.source, hp:ref.hp, bite:ref.bite, speed:ref.speed, weight:ref.weight, regen:ref.regen, regenDelay:ref.regenDelay, types:ref.types, tame:ref.tame, tool:ref.tool, mountable:ref.mountable, shieldable:ref.shieldable, ability:ref.ability, skillStats:ref.skillStats, skill:`ability-${def.id}` });
+  if (REFERENCE_BIOMES[def.id]) def.biome=REFERENCE_BIOMES[def.id];
+  SKILLS[def.skill] = { name:ref.skillName, cd:ref.skillStats[0].reload, desc:ref.ability.replaceAll('-',' ') };
+}
+for (const id of ['grove-spirit','ice-spirit','dune-spirit','fire-fairy','water-fairy','iceberg','living-mushroom','white-spider','stone-golem','volcanic-golem','mantle','octopus','phoenix']) PETS.find(p=>p.id===id).bossOnly=true;
+PETS.find(p=>p.id==='snake').body='deer';
+PETS.find(p=>p.id==='turtle').body='fish';
+PETS.find(p=>p.id==='magma-boar').body='bear';
 export const PET_BY_ID = new Map(PETS.map(p => [p.id, p]));
 export const RARITY = {
   common: { color: '#a3adb8', label: 'Common' },
@@ -446,37 +527,14 @@ export const BOSSES = [
   { id: 'deep-kraken', name: 'Deep Kraken', biome: 'ocean', body: 'kraken', color: '#b0477a', accent: '#ff9ac9', hp: 9000, dmg: 55, reach: 260, every: 1.6, gold: 5500, xp: 4800, minions: 'crab' },
   { id: 'magma-titan', name: 'Magma Titan', biome: 'volcano', body: 'golem', color: '#5c3b33', accent: '#ff7b2e', hp: 10000, dmg: 65, reach: 230, every: 1.8, gold: 6000, xp: 5000, minions: 'salamander' },
 ];
-const BOSS_TYPES = { forest: ['plant'], winter: ['ice'], darkness: ['shadow', 'poison'], desert: ['rock'], ocean: ['water'], volcano: ['fire', 'rock'] };
-for (const b of BOSSES) { b.types = BOSS_TYPES[b.biome]; b.cycle = { forest: ['roots', 'slam'], winter: ['ring', 'freeze', 'slam'], darkness: ['poison', 'ring', 'roots'], desert: ['slam', 'ring', 'rocks'], ocean: ['poison', 'whirlpool'], volcano: ['rocks', 'ring', 'slam'] }[b.biome]; }
+for (const b of BOSSES) {
+  Object.assign(b, BOSS_PROFILES[b.id]);b.minions=b.drops[0];b.cycle=b.attacks.map(a=>a.kind);
+  for(const id of b.drops)PETS.find(p=>p.id===id).rarity='legendary';
+}
 export const BOSS_BY_ID = new Map(BOSSES.map(b => [b.id, b]));
 
-// Cosmetic + light-effect hats bought with gold. Lost on leaving the server.
-export const HATS = [
-  { id: 'none', name: 'No hat', cost: 0, note: '' },
-  { id: 'leaf', name: 'Wood Hat', cost: 2000, note: '+2 wood per hit', gather: { wood: 2 } },
-  { id: 'miner', name: 'Miner Hat', cost: 2000, note: '+2 stone per hit', gather: { stone: 2 } },
-  { id: 'tamer', name: 'Tamer Cap', cost: 2500, note: 'Tame chance x1.29', tame: 1.29 },
-  { id: 'beanie', name: 'Winter Cap', cost: 3000, note: '+15% speed and 10% defence in Winter', biome: 'winter', biomeArmor: .1 },
-  { id: 'flower', name: 'Flower Crown', cost: 3000, note: 'Pets regenerate twice as fast' },
-  { id: 'horns', name: 'Warrior Horns', cost: 6000, note: '+10% damage' },
-  { id: 'knight', name: 'Knight Helmet', cost: 10000, note: '-40% damage taken, -30% speed', armor: .4, slow: .30 },
-  { id: 'crown', name: 'King Crown', cost: 20000, note: '+50% XP earned by pets', petXp: 1.5 },
-];
-HATS.push(
-  { id: 'bush', name: 'Bush Hat', cost: 7000, note: '+1 food per hit', gather: { food: 1 } },
-  { id: 'lucky', name: 'Lucky Hat', cost: 10000, note: 'Taming tools fail half as often', luck: .5 },
-  { id: 'trophy', name: 'Wolf Trophy Hat', cost: 15000, note: '+50% XP from animal kills', killXp: 1.5 },
-  { id: 'swift', name: 'Swift Cap', cost: 20000, note: '+10% movement speed', move: 1.1 },
-  ...['forest','darkness','desert','ocean','volcano'].map(biome => ({ id: `season-${biome}`, name: `${BIOME_BY_ID[biome].name} Hat`, cost: 3000, note: `+15% speed and 10% defence in ${BIOME_BY_ID[biome].name}`, biome, biomeArmor: .1 })),
-);
-export const ACCESSORIES = [
-  { id: 'none', name: 'No accessory', cost: 0, note: '' },
-  { id: 'baby-wings', name: 'Baby Wings', cost: 5000, note: '+20% spear and naginata damage', family: 'spear', damage: 1.2 },
-  { id: 'dragon-wings', name: 'Dragon Wings', cost: 10000, note: '+10% sword and katana damage', family: 'sword', damage: 1.1 },
-  { id: 'dark-wings', name: 'Dark Wings', cost: 20000, note: '+10% dagger and cleaver damage', family: 'daggers', damage: 1.1 },
-  { id: 'demon-wings', name: 'Demon Wings', cost: 20000, note: '+20% axe and labrys damage', family: 'axe', damage: 1.2 },
-  { id: 'round-wings', name: 'Final Round Wings', cost: 20000, note: '+20% glove damage', family: 'gloves', damage: 1.2 },
-  { id: 'angel-wings', name: 'Angel Wings', cost: 20000, note: 'Regenerate 1 health each second', regen: 1 },
-];
+// One head slot and one accessory slot. Owned equipment persists through death.
+export const HATS = EQUIPMENT_HATS;
+export const ACCESSORIES = EQUIPMENT_ACCESSORIES;
 export const ACCESSORY_BY_ID = new Map(ACCESSORIES.map(a => [a.id,a]));
-export const HAT_BY_ID = new Map(HATS.map(h => [h.id, h]));
+export const HAT_BY_ID = new Map(HATS.map(h => [h.id,h]));

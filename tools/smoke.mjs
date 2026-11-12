@@ -1,3 +1,4 @@
+import { PETS } from '../data.js';
 import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -21,7 +22,7 @@ try {
   await page.fill('#player-name', 'Smoke');
   await page.click('#open-tamodex');
   await page.locator('.dex-card').nth(7).waitFor();
-  if (await page.locator('.dex-card').count() !== 9) throw new Error('forest field guide should list 9 animals');
+  if (await page.locator('.dex-card').count() !== PETS.filter(p=>p.biome==='forest').length) throw new Error('forest field guide should list every forest species');
   if (await page.locator('.boss-card').count() !== 1) throw new Error('field guide should show the boss');
   await page.click('.collection-back');
   await page.click('#play-cpu');

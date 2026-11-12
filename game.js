@@ -127,7 +127,7 @@ function renderGuide() {
     card.innerHTML = `<span class="rarity" style="--c:${rarity.color}">${rarity.label}</span><h3>${escapeHtml(pet.name)}</h3>
       <div class="types">${pet.types.map(t => `<i style="--c:${TYPES[t].color}">${t}</i>`).join('')}</div>
       <p><b>Tame</b> ${pet.tame}% · raise with the ${pet.tool === 'appletor' ? 'Appletor' : 'Slingshot'}</p>
-      <p><b>${SKILLS[pet.skill].name}</b> ${SKILLS[pet.skill].desc}</p>
+      <p><b>${SKILLS[pet.skill].name}</b> ${SKILLS[pet.skill].desc} · cooldown ${pet.skillStats.map(s=>s.reload).join(' / ')}s</p>
       <p class="stats">HP ${pet.hp.join(' / ')} · Bite ${pet.bite.join(' / ')}</p>
       <p class="temper">${{ passive: 'Never attacks', coward: 'Runs when hurt', neutral: 'Fights back', aggressive: 'Hunts tamers' }[pet.temper]}</p>`;
     card.prepend(art);
@@ -302,6 +302,7 @@ function leaveGame(message = '') {
 
 function cmd(c) {
   if (!game.running) return;
+  if (c.t === 'skill' && !Number.isFinite(c.x)) { const at=screenToWorld(game.pointer.x,game.pointer.y); c={...c,x:Math.round(at.x),y:Math.round(at.y)}; }
   if (game.mode === 'local') S.command(game.local, game.id, c);
   else send({ t: 'cmd', c });
 }
@@ -314,7 +315,7 @@ function decodeSnap(s) {
   for (const r of s.a) { const a = S.decodeAnimal(r); animals.set(a.id, a); }
   for (const r of s.j) { const j = S.decodeProjectile(r); projectiles.set(j.id, j); }
   return {
-    time: s.time, biome: s.biome || biomeState(s.time).biome.id, resources: s.r || [], chests: s.chests || [], me: s.me, players, animals, projectiles,
+    time: s.time, biome: s.biome || biomeState(s.time).biome.id, activeEvent:s.activeEvent||null, resources: s.r || [], chests: s.chests || [], me: s.me, players, animals, projectiles,
     structures: s.s.map(S.decodeStructure), hazards: s.h.map(([id, x, y, r, at, kind, until, owner]) => ({ id, x, y, r, at, kind, until, owner })), boss: s.boss || [],
   };
 }
@@ -333,8 +334,8 @@ function pushSnap(snap) {
   // Dynamic boss chests have coordinates, unlike deterministic map nodes.
   game.grid.list = game.grid.list.filter(n => n.type !== 'chest');
   for (const [k, list] of game.grid.grid) game.grid.grid.set(k, list.filter(n => n.type !== 'chest'));
-  for (const [id, x, y, r, hp] of snap.chests) {
-    const n = { id, type: 'chest', x, y, r, hp, respawnAt: 0, biome: snap.biome };
+  for (const [id, x, y, r, hp, goldRemaining] of snap.chests) {
+    const n = { id, type: 'chest', x, y, r, hp, goldRemaining, respawnAt: 0, biome: snap.biome };
     game.grid.list.push(n); const k = `${Math.floor(x/game.grid.cell)},${Math.floor(y/game.grid.cell)}`;
     if (!game.grid.grid.has(k)) game.grid.grid.set(k, []); game.grid.grid.get(k).push(n);
   }
@@ -419,6 +420,7 @@ function handleEvents(events) {
   for (const e of events) {
     const mine = e.by === game.id || e.to === game.id || e.owner === game.id;
     switch (e.k) {
+      case 'dice': floater(e.x,e.y-70,`⚄ ${e.roll}`, '#e1be61', 26); break;
       case 'season': banner(`${BIOME_BY_ID[e.biome].name} has arrived`); break;
     case 'dmg': {
         const self = e.id === game.id;
@@ -688,7 +690,9 @@ function renderShop() {
   const me = myData(), self = game.cur?.players.get(game.id);
   if (!me || !self) return;
   const grid = $('shop-items'); grid.replaceChildren();
-  for (const hat of [...HATS.map(h => ({...h, category:'hat'})), ...ACCESSORIES.map(a => ({...a, category:'accessory'}))]) {
+  const search=$('equipment-search')?.value.toLowerCase().trim()||'', category=$('equipment-category')?.value||'all';
+  for (const hat of [...HATS.filter(h=>!h.event||h.event===game.cur.activeEvent).map(h => ({...h, category:'hat'})), ...ACCESSORIES.map(a => ({...a, category:'accessory'}))]) {
+    if(category!=='all'&&hat.category!==category||search&&!`${hat.name} ${hat.note}`.toLowerCase().includes(search))continue;
     const wearing = (hat.category === 'hat' ? self.hat : self.wings) === hat.id;
     const card = document.createElement('div'); card.className = `shop-item${wearing ? ' on' : ''}`;
     const art = document.createElement('canvas'); art.width = art.height = 96;
@@ -706,6 +710,8 @@ function renderShop() {
   }
 }
 
+$('equipment-search').addEventListener('input',renderShop);
+$('equipment-category').addEventListener('change',renderShop);
 const bossHeads = new Map();
 function bossHead(id) {
   if (!BOSS_BY_ID.has(id)) return null;

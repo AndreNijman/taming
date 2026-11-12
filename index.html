@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20261112-1">
+  <link rel="stylesheet" href="style.css?v=20261112-2">
   <!-- one version bump busts every module while keeping each a singleton -->
   <script type="importmap">
-    { "imports": { "./data.js": "./data.js?v=20261112-1", "./sim.js": "./sim.js?v=20261112-1", "./render.js": "./render.js?v=20261112-1", "./netping.js": "./netping.js?v=20261112-1", "./netprobe.js": "./netprobe.js?v=20261112-1", "./netdev.js": "./netdev.js?v=20261112-1", "./predict.js": "./predict.js?v=20261112-1" } }
+    { "imports": { "./data.js": "./data.js?v=20261112-2", "./sim.js": "./sim.js?v=20261112-2", "./render.js": "./render.js?v=20261112-2", "./netping.js": "./netping.js?v=20261112-2", "./netprobe.js": "./netprobe.js?v=20261112-2", "./netdev.js": "./netdev.js?v=20261112-2", "./predict.js": "./predict.js?v=20261112-2" } }
   </script>
 </head>
 <body>
@@ -149,6 +149,7 @@
     <section id="field-shop" class="dialog card shop-dialog hidden" role="dialog" aria-modal="true">
       <div class="dialog-head"><h2>Hats & wings</h2><button id="close-shop" class="icon-button" aria-label="Close shop">×</button></div>
       <p class="muted">Hats cost gold and last until you leave this world.</p>
+      <div class="equipment-filters"><label>Find equipment <input id="equipment-search" type="search" placeholder="Name, element or effect"></label><label>Show <select id="equipment-category"><option value="all">All equipment</option><option value="hat">Hats</option><option value="accessory">Wings, capes and bags</option></select></label></div>
       <div id="shop-items" class="shop-items"></div>
     </section>
     <section id="pause" class="dialog card pause hidden" role="dialog" aria-modal="true" aria-labelledby="pause-title">
@@ -163,6 +164,6 @@
     </section>
     <div id="toast" role="status" aria-live="polite"></div>
   </main>
-  <script type="module" src="game.js?v=20261112-1"></script>
+  <script type="module" src="game.js?v=20261112-2"></script>
 </body>
 </html>

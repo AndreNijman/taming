@@ -11,7 +11,7 @@ Branch: `fix/wildbound-mechanics`. Shared rules apply to solo and relay games. T
 | 3, 4, 40 | Pet release buttons; failed taming wakes and angers wildlife. Tool failure clears the bonus and wakes without aggression. |
 | 5, 11, 35 | Naturally evolved wild animals, additional evolved respawns, removal of chase/follow speed multipliers, corrected matching species stats, slower weapon tiers and evolved variants. |
 | 6, 38, 39, 44 | Pets roam around ground orders and idle defensive positions. Explicit targets are chased beyond the normal leash and survive incidental attacks. Relay preserves target IDs. |
-| 7 | Species skill dispatch includes burst, sustained area effects, drain/heal, slow, poison, fire, lunge, knockback, teleport and rally. Wolf/rabbit/lynx/hedgehog cooldowns use separate stage tables. Hedgehog suppresses buildings/skills. |
+| 7 | All 47 shipped species have distinct ability dispatch and three sourced evolution-stage records. Includes delayed clones, ice ramparts, projectiles, zones, shields, debuffs, support and targeted dashes. |
 | 8, 30 | One world-wide biome, Forest for the requested 15 minutes and the other five for 8 minutes. Visible wildlife and owned pets survive transitions. Pet catch-up teleport only occurs outside human views. |
 | 9, 15, 17–19 | Owners can destroy buildings; wrenches repair them. Selection and auto attack do not place buildings. A physical press places once, including if it must wait for a weapon cooldown. Placement is closer and pushes overlapping bodies. Damaged buildings show a health bar for three seconds. |
 | 10, 37 | Bites have a 350 ms contact windup; spikes deal damage without velocity knockback. |
@@ -21,31 +21,10 @@ Branch: `fix/wildbound-mechanics`. Shared rules apply to solo and relay games. T
 | 20, 22 | Boost velocity persists beyond the pad. Labrys hits the full circle. |
 | 27–29, 34 | Bots use obstacle routing, skip unharvestable insects, heal while moving, choose different primary families, and include aggressive personalities that keep fighting at low health. |
 | 31–33 | Damage does not shake the camera. Food press eats once. Punches alternate hands, including across snapshots. |
-| 41, 42 | Stronger Knight Helmet speed penalty; corrected wood/miner hats, seasonal defence, pet-XP crown, luck/kill-XP/speed hats, and a separate wings slot with matching weapon bonuses and regeneration. |
+| 41, 42 | 65 hats and 38 accessories, searchable equipment shop, matching elemental wings/capes, weapon bonuses, status immunity, specialist effects and stronger Knight Helmet penalty. |
 
 ## Reference and tuning limits
 
-This remains an original game with procedural art. It is not an exhaustive port of Taming.io's animal, boss or equipment catalogue. Exact per-species abilities, the full hat/accessory catalogue, and every balance value have **not** been verified against gameplay footage. In particular, resource respawn seconds, the Knight speed penalty, added structure-tier values, skill radii and boss timings are Wildbound tuning values; they should not be described as exact wiki parity.
+Animal stage tables, item properties, equipment effects and six boss profiles are recorded in the reference modules and [source notes](reference-sources.md). Regression tests cast all 47 species at all three stages, exercise equipment effects, boss rewards, upgrade branches and multiplayer snapshot compatibility.
 
-The wiki describes Forest as 16 minutes; this branch deliberately uses the user's requested 15 minutes. Existing species without a matching reference counterpart retain original stats. The major mechanical corrections are testable independently of those balance choices.
-
-Sources consulted:
-
-- [Age and upgrade graph](https://tamingio.fandom.com/wiki/Age)
-- [Weapon stats](https://tamingio.fandom.com/wiki/Weapons_List)
-- [Animal stats](https://tamingio.fandom.com/wiki/Animals_List)
-- [Biomes](https://tamingio.fandom.com/wiki/Biomes)
-- [Resource deposits](https://tamingio.fandom.com/wiki/Resource_Deposits), [wood](https://tamingio.fandom.com/wiki/Wood), [stone](https://tamingio.fandom.com/wiki/Stone)
-- [Taming](https://tamingio.fandom.com/wiki/Taming)
-- [Equipment](https://tamingio.fandom.com/wiki/In-game_Shop)
-- [Tree boss](https://tamingio.fandom.com/wiki/Tree_Boss), [Octopus boss](https://tamingio.fandom.com/wiki/Octopus_Boss)
-- [Wolf](https://tamingio.fandom.com/wiki/Wolf), [Rabbit](https://tamingio.fandom.com/wiki/Rabbit), [Lynx](https://tamingio.fandom.com/wiki/Lynx), [Hedgehog](https://tamingio.fandom.com/wiki/Hedgehog)
-
-## Verification
-
-- `npm run check`: syntax, progression, long simulation, mechanics regressions, relay command validation, movement prediction and network logging.
-- `npm test`: solo browser smoke.
-- `npm run test:controls`: persistent keybinds, one-use food, release, click-only placement, season synchronization, wings shop and mobile layout.
-- `npm run test:mp`: multiplayer browser smoke with a local relay.
-- `npm run test:lobby`, `npm run test:latency`, `npm run test:dev`, `npm run test:dev-smoke`: existing relay integration suites.
-- `agent-verify --full` and `git diff --check`.
+This is an original implementation with procedural artwork. The requested mechanics are implemented, but exact gameplay parity has not been established from video. Resource respawn timers, skill radii, some boss intervals and movement penalties remain local tuning where the public reference does not provide an unambiguous number. The wiki describes Forest as 16 minutes; the implementation follows the user's requested 15 minutes. These limits must remain explicit when reporting completion.

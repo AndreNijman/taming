@@ -160,6 +160,11 @@ try {
       .getByRole("heading", { name: "Demon Wings", exact: true })
       .count(),
   );
+  await page.selectOption('#equipment-category','accessory');
+  await page.fill('#equipment-search','fire');
+  assert.ok(await page.getByRole('heading',{name:'Fire Cape',exact:true}).count());
+  assert.equal(await page.getByRole('heading',{name:'Demon Wings',exact:true}).count(),0);
+  await page.screenshot({path:'/tmp/wildbound-equipment.png'});
   await page.click("#close-shop");
   await page.screenshot({ path: "/tmp/wildbound-mechanics.png" });
   assert.deepEqual(errors, []);

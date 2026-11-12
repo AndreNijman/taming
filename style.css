@@ -308,3 +308,7 @@ body:not(.playing) #toast { top: auto; bottom: 24px; }
 .release-pet { font: inherit; font-size: 11px; padding: 4px 8px; min-height: 44px; cursor: pointer; }
 button:focus-visible { outline: 3px solid #e8bf57; outline-offset: 3px; }
 @media (max-width: 600px) { #keybinds { grid-template-columns: 1fr; } }
+
+.equipment-filters { display: flex; gap: 16px; flex-wrap: wrap; margin-block: 16px; }
+.equipment-filters label { display: grid; gap: 4px; flex: 1; min-width: 160px; }
+.equipment-filters input, .equipment-filters select { min-height: 44px; width: 100%; }
